@@ -1,0 +1,259 @@
+# PDU Session Establishment Flow - Session Management Signaling Only
+# Assumptions: UE authenticated, registered, and has secure NAS connection
+---
+# Step 1: UE requests PDU session establishment
+# direction: "UE → AMF"
+# interface: "N1 (NAS-SM)"
+# message_type: "PDU Session Establishment Request"
+# protocol: "NAS-SM"
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Session
+metadata:
+  name: session-1
+  namespace: default
+description: "UE requests establishment of a PDU session with QoS requirements"
+spec:
+  pdu_session_id: 0x05  # Session identifier (5)
+  pdu_session_type: IPv4
+    ssc_mode: 0x01  # Service and Session Continuity mode 1 (UE anchor)
+    capability_5gsm:  # 5GS Session Management capability
+      rqos: true  # Reflective QoS support
+      mh6pdu: false  # Multi-homed IPv6 PDU sessions not supported
+      ept_s1: false  # Ethernet PDU type in S1 mode not supported
+    maximum_number_of_packet_filters: 16  # Max supported packet filters per PDU session
+    sm_pdu_dn_request_container:  # Optional: specific DN requests
+      length: 0x00  # No specific DN requests
+    extended_protocol_configuration_options:
+      - container_id: 0x8021  # IPCP (Internet Protocol Control Protocol)
+        contents: "0x0101000c03060a0000010206000000000"  # IPCP Configure-Request
+      - container_id: 0x0001  # P-CSCF IPv4 address request
+        contents: ""  # Empty = request for P-CSCF address
+      - container_id: 0x0003  # DNS Server IPv4 address request
+        contents: ""  # Empty = request for DNS servers
+    requested_qos_rules:  # QoS rules UE wants to establish
+      - rule_operation_code: 0x01  # Create new QoS rule
+        dqr: false  # Default QoS rule flag
+        qos_rule_precedence: 100  # Lower value = higher precedence
+        qos_flow_identifier: 0x09  # QFI for this rule
+        packet_filter_list:
+          - packet_filter_id: 0x01
+            direction: 0x03  # Bidirectional
+            packet_filter_contents: match-all  # Default bearer - match all traffic
+    requested_qos_flow_descriptions:  # Optional QoS flow descriptions
+      - qfi: 0x09  # QoS Flow Identifier
+        operation_code: 0x01  # Create new QoS flow
+        parameters:
+          five_qi: 0x09  # 5G QoS Identifier (9 = best effort)
+          gfbr_uplink: null  # No Guaranteed Flow Bit Rate uplink
+          gfbr_downlink: null  # No Guaranteed Flow Bit Rate downlink  
+          mfbr_uplink: null  # No Maximum Flow Bit Rate uplink
+          mfbr_downlink: null  # No Maximum Flow Bit Rate downlink
+          averaging_window: null  # Not applicable for best effort
+          eps_bearer_identity: null  # Not used in 5GC
+---
+# Step 2: AMF forwards session request to SMF
+# direction: "AMF → SMF"
+# interface: "N11"
+  message_type: "Nsmf_PDUSession_CreateSMContext"
+  protocol: "HTTP/2 REST"
+  service_operation: "POST /nsmf-pdusession/v1/sm-contexts"
+  json_payload:
+    supi: "imsi-001010123456789"  # UE permanent identifier
+    pei: "imeisv-1234567890123456"  # UE equipment identifier  
+    pdu_session_id: 5
+    dnn: "internet"  # Data Network Name - determines external connectivity
+    s_nssai:  # Network slice for this session
+      sst: 1  # Slice/Service Type (1 = eMBB)
+      sd: "000001"  # Slice Differentiator
+    serving_plmn_id: "00101"  # Serving network
+    ue_location:
+      nr_location:
+        tai: "00101-0001"  # Tracking Area Identity
+        ncgi: "00101-000001-123"  # NR Cell Global Identifier
+    request_type: "INITIAL_REQUEST"
+    n1_sm_msg:  # UE's PDU Session Establishment Request
+      content_id: "n1SmMsg"
+      content_type: "application/vnd.3gpp.nas"  
+      nas_message: "embedded UE request from step 1"
+    sm_context_type: "primary"
+    priority_access: "not_prioritized"
+    ue_time_zone: "+01:00"
+    charging_id: "chg-12345678"
+  description: "AMF creates SM context at SMF and forwards UE session request"
+
+  # Step 3: SMF responds with session establishment decision
+  - message_id: 3
+    direction: "SMF → AMF"  
+    interface: "N11"
+    message_type: "Nsmf_PDUSession_CreateSMContext Response"
+    protocol: "HTTP/2 REST"
+    http_status: 201  # Created
+    json_payload:
+      sm_context_ref: "/nsmf-pdusession/v1/sm-contexts/ctx-12345"  # SMF context reference
+      cause: "PDU_SESSION_ESTABLISHMENT_ACCEPTED"
+      pdu_session_type: "IPV4"
+      allocated_ipv4_address: "10.45.0.100"  # IP address allocated by SMF/UPF
+      selected_dnn: "internet"
+      selected_ssc_mode: 1  # SSC mode 1 confirmed
+      session_ambr:  # Session-level aggregate bit rates
+        uplink: "100000000"  # 100 Mbps in bps
+        downlink: "150000000"  # 150 Mbps in bps
+      authorized_qos_rules:  # SMF-authorized QoS rules  
+        qos_rule_1:
+          qos_rule_id: 0x01
+          qos_rule_precedence: 100
+          qos_flow_identifier: 0x09
+          rule_operation_code: 0x01  # Create new QoS rule
+          packet_filter_list:
+            - packet_filter_id: 0x01
+              precedence: 100
+              direction: 0x03  # Bidirectional
+              contents: "permit all"  # Default QoS rule
+      qos_flow_setup_list:  # Established QoS flows
+        - qfi: 0x09
+          qos_profile:
+            five_qi: 9  # Non-GBR, best effort
+            allocation_retention_priority:
+              priority_level: 9  # Lowest priority
+              pre_emption_capability: "NOT_PREEMPT"
+              pre_emption_vulnerability: "PREEMPTABLE"
+            reflective_qos_attribute: "rqi_6"  # RQI = 6 (no reflective QoS)
+      n1_sm_msg:  # Response message for UE
+        content_id: "n1SmMsg"
+        content_type: "application/vnd.3gpp.nas"
+        nas_message: "PDU Session Establishment Accept (see step 4)"
+      n2_sm_info:  # Information for gNB to setup user plane
+        content_id: "n2SmInfo"
+        content_type: "application/vnd.3gpp.ngap"
+        ngap_message: "PDU Session Resource Setup Request"
+        pdu_session_resource_setup_items:
+          - pdu_session_id: 5
+            s_nssai: {sst: 1, sd: "000001"}
+            pdu_session_resource_setup_request_transfer:
+              upf_tunnel_info:
+                transport_layer_address: "192.168.100.50"  # UPF N3 interface IP
+                gtp_teid: "0x12345678"  # GTP tunnel endpoint ID
+              qos_flow_setup_request_list:
+                - qfi: 0x09
+                  qos_characteristics:
+                    five_qi: 9
+                    priority_level: 9
+    description: "SMF accepts session, allocates resources, and provides setup parameters"
+
+  # Step 4: AMF delivers session establishment acceptance to UE
+  - message_id: 4
+    direction: "AMF → UE"
+    interface: "N1 (NAS-SM)"
+    message_type: "PDU Session Establishment Accept"  
+    protocol: "NAS-SM"
+    nas_sm_payload:
+      message_type: 0xc2  # PDU Session Establishment Accept
+      pdu_session_id: 0x05
+      pti: 0x01  # Matching procedure transaction identifier
+      message_body:
+        selected_pdu_session_type: 0x01  # IPv4
+        selected_ssc_mode: 0x01  # SSC mode 1
+        authorized_qos_rules:  # Network-authorized QoS rules
+          qos_rule_1:
+            qos_rule_id: 0x01
+            rule_operation_code: 0x01  # Create new QoS rule
+            dqr: true  # This is the default QoS rule
+            qos_rule_precedence: 100
+            qos_flow_identifier: 0x09
+            packet_filter_list:
+              - packet_filter_id: 0x01
+                direction: 0x03  # Bidirectional  
+                contents: "match all IP traffic"
+        session_ambr:  # Authorized session bit rates
+          session_ambr_downlink:
+            unit: 0x06  # Mbps
+            value: 150
+          session_ambr_uplink:  
+            unit: 0x06  # Mbps
+            value: 100
+        cause_5gsm: null  # No error cause (successful)
+        pdu_address:  # Allocated PDU session address
+          pdu_session_type: 0x01  # IPv4
+          ipv4_address: "10.45.0.100"
+        gprs_timer_3_t3396: null  # No backoff timer needed
+        extended_protocol_configuration_options_response:
+          - container_id: 0x8021  # IPCP response
+            contents: "0x0201000c030610450064"  # IPCP Configure-Ack with allocated IP
+          - container_id: 0x0001  # P-CSCF IPv4 address  
+            contents: "192.168.10.5"  # P-CSCF server address
+          - container_id: 0x0003  # DNS server addresses
+            contents: "8.8.8.8,8.8.4.4"  # Primary and secondary DNS
+        dnn: "internet"  # Confirmed DNN
+        authorized_qos_flow_descriptions:  # Final QoS flow parameters
+          qos_flow_1:
+            qfi: 0x09
+            operation_code: 0x01  # Create
+            five_qi: 0x09  # Best effort, non-GBR
+            gfbr_uplink: null  # No guaranteed bit rate
+            gfbr_downlink: null
+            mfbr_uplink: null  # No maximum bit rate limit  
+            mfbr_downlink: null
+            reflective_qos_indicator: false  # No reflective QoS
+    description: "Network accepts PDU session and provides allocated resources to UE"
+
+  # Step 5: UE confirms successful session establishment  
+  - message_id: 5
+    direction: "UE → AMF"
+    interface: "N1 (NAS-SM)"
+    message_type: "PDU Session Establishment Complete"
+    protocol: "NAS-SM"  
+    nas_sm_payload:
+      message_type: 0xc3  # PDU Session Establishment Complete
+      pdu_session_id: 0x05
+      pti: 0x01  # Matching procedure transaction identifier
+      message_body:
+        # Minimal message - UE acknowledges successful establishment
+        # No additional IEs required for basic completion
+    description: "UE confirms successful PDU session establishment and activation"
+
+  # Step 6: AMF notifies SMF of UE confirmation
+  - message_id: 6
+    direction: "AMF → SMF"
+    interface: "N11"  
+    message_type: "Nsmf_PDUSession_UpdateSMContext"
+    protocol: "HTTP/2 REST"
+    service_operation: "POST /nsmf-pdusession/v1/sm-contexts/ctx-12345/modify"
+    json_payload:
+      n1_sm_msg:  # UE's establishment complete message
+        content_id: "n1SmMsg"  
+        content_type: "application/vnd.3gpp.nas"
+        nas_message: "PDU Session Establishment Complete from step 5"
+      up_cnx_state: "ACTIVATED"  # User plane is now active
+      ho_state: "NONE"  # No handover in progress
+      release_access_bearer: false  # Keep access bearers active
+    description: "AMF confirms to SMF that UE has acknowledged session establishment"
+
+summary:
+  description: "PDU Session Establishment - Session Management Signaling Only"
+  key_interfaces:
+    - N1: "UE ↔ AMF (NAS-SM direct signaling)"
+    - N11: "AMF ↔ SMF (service-based interface)"
+  protocols_used:
+    - "NAS-SM": "Non-Access Stratum Session Management"  
+    - "HTTP/2": "Service-based architecture REST APIs"
+  final_state:
+    ue_state: "CM-CONNECTED with active PDU session"
+    pdu_session_id: 5
+    allocated_ip: "10.45.0.100"
+    qos_flows: [9]
+    session_ambr:
+      uplink: "100 Mbps"
+      downlink: "150 Mbps"
+```
+
+## Streamlined Message Flow
+
+This simplified version shows only the session management payload after authentication:
+
+1. **Session Request**: UE directly sends PDU Session Establishment Request with QoS requirements
+2. **SMF Context Creation**: AMF creates SM context at SMF with session parameters  
+3. **Resource Allocation**: SMF allocates IP address, QoS flows, and session parameters
+4. **Session Acceptance**: UE receives allocated resources and network authorization
+5. **Confirmation**: UE confirms successful session activation
+
+The flow now shows the actual NAS-SM signaling content without the NAS-MM transport wrapper, similar to application data after TLS handshake completion.

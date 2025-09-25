@@ -1,0 +1,124 @@
+# Step 1: UE requests registration with network
+# direction: "UE → AMF"
+# interface: "N1 (NAS-MM)"
+# message_type: "Registration Request"
+# protocol: "NAS-MM"
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: reg-1
+  namespace: default
+description: "UE provides identity and capabilities for initial network registration"
+spec:
+  registration_type: 0x01  # Initial registration
+  nas_key_set_identifier:
+    tsc: 0  # Native security context
+    nas_ksi: 0x07  # No key available yet
+  mobile_identity:
+    type: "SUPI"  # Subscription Permanent Identifier
+    value: "imsi-001010123456789"
+  ue_security_capability:
+    encryption_algorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrity_algorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ue_status:
+    s1_mode: false  # Not using EPC
+    n1_mode: true   # Using 5GC
+
+---  
+# Step 2: AMF creates UE context and responds with authentication challenge
+# direction: "AMF → UE"
+# interface: "N1 (NAS-MM)"
+# message_type: "Authentication Request"
+# protocol: "NAS-MM"
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Authentication
+metadata:
+  name: auth-1
+  namespace: default
+description: "AMF creates UE context and challenges UE for mutual authentication (in spec)"
+spec:
+  reg-id: reg-1
+  ue_context_id: "ue-ctx-789abc"  # Unique context identifier
+  supi: "imsi-001010123456789"        # from mobile_identity in Reg.spec
+  ngksi: 0x01  # 5G Key Set Identifier
+  rand: "0xa1b2c3d4e5f6789012345678901234567890abcdef"  # 128-bit random challenge
+  autn: "0x1234567890abcdef1234567890abcdef12345678"   # Authentication token
+
+---  
+# Step 3: UE responds with authentication response
+# direction: "UE → AMF"
+# interface: "N1 (NAS-MM)"
+# message_type: "Authentication Response"
+# protocol: "NAS-MM"
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Authentication
+metadata:
+  name: auth-1
+  namespace: default
+description: "UE provides authentication response proving identity (in status)"
+spec:
+  reg-id: reg-1
+  ue_context_id: "ue-ctx-789abc"  # Unique context identifier
+  supi: "imsi-001010123456789"        # from mobile_identity in Reg.spec
+  ngksi: 0x01                         # 5G Key Set Identifier
+  rand: "0xa1b2c3d4e5f6789012345678901234567890abcdef"  # 128-bit random challenge
+  autn: "0x1234567890abcdef1234567890abcdef12345678"    # Authentication token
+status:
+  conditions:
+    - type: Authenticated
+      status: "True"
+      lastTransitionTime: "2025-09-14T00:10:55Z"
+      message: Success 
+  authentication_response: "0x87654321"  # Computed response (RES)
+---
+# Step 4: AMF completes registration and assigns context ID
+# direction: "AMF → UE"
+# interface: "N1 (NAS-MM)"
+# message_type: "Registration Accept"
+# protocol: "NAS-MM"
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: reg-1
+  namespace: default
+description: "AMF accepts registration, establishes security, and provides UE context ID (in status)"
+spec:
+  registration_type: 0x01  # Initial registration
+  nas_key_set_identifier:
+    tsc: 0  # Native security context
+    nas_ksi: 0x07  # No key available yet
+  mobile_identity:
+    type: "SUPI"  # Subscription Permanent Identifier
+    value: "imsi-001010123456789"
+  ue_security_capability:
+    encryption_algorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrity_algorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ue_status:
+    s1_mode: false  # Not using EPC
+    n1_mode: true   # Using 5GC
+status:
+  conditions:
+    - type: Registered
+      status: "True"
+      lastTransitionTime: "2025-09-14T00:10:55Z"
+      message: Registered
+    - type: SecurityContextEstablished
+      status: "True"
+      lastTransitionTime: "2025-09-14T00:10:55Z"
+      message: Established
+  ue_context_id: "ue-ctx-789abc"  # Same context ID
+  nas_security_algorithms:
+    encryption: "5G-EA2"  # Selected algorithm
+    integrity: "5G-IA2"   # Selected algorithm
+  mobile_identity:
+    type: "5G-GUTI"  # Assigned temporary identity
+    value: "001-01-0001-87654321"
+  tai_list:  # Tracking Area Identity list
+    - tai: "00101-000001"
+    - tai: "00101-000002"  
+  allowed_nssai:  # Network Slice Selection Assistance Information
+    - sst: 1  # eMBB slice
+      sd: "000001"
+    - sst: 2  # URLLC slice  
+      sd: "000002"
+  

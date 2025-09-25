@@ -1,0 +1,16 @@
+name: amf
+registry:
+  encryption:
+spec:
+  controllers:
+    - name: cn-cp-attachment-controller
+      sources:
+        - kind: Attachment
+      pipeline:
+        "@aggregate":
+          - "@project":
+              metadata: "$.metadata"
+              spec: "$.spec"
+              status: Processed
+      target:
+        kind: Attachment
