@@ -1,0 +1,82 @@
+apiVersion: operator.dcontroller.io/v1alpha1
+kind: Operator
+metadata:
+  name: amf
+  annotations:
+    operator.dcontroller.io/init: |
+      apiVersion: amf.operator.dcontroller.io/v1alpha1
+      kind: State
+      metadata:
+        name: state
+spec:
+  controllers:
+    - name: register-input
+      sources:
+        - kind: Registration
+          selector:
+            matchExpressions:
+              - key: state
+                operator: DoesNotExist
+      pipeline:
+        '@aggregate':
+          - '@project':
+              metadata:
+                name: $.metadata.name
+                namespace: $.metadata.namespace
+                labels:
+                  - state: INIT
+                annotations: $.metadata.annotations
+              spec: $.spec
+              status:
+                '@cond':
+                  - '@or':
+                      - '@not':
+                          '@eq':
+                            - $.spec.mobile_identity.type
+                            - SUPI
+                      - '@isnil': $.spec.mobile_identity.value
+                  - conditions:
+                      - type: Registered
+                        status: "False"
+                        lastTransitionTime: '@now'
+                        reason: MobileIdentityNotFound
+                        message: Mobile identity is not provided
+                  - '@cond':
+                      - '@or':
+                          - '@not':
+                              '@in':
+                                - 5G-EA2
+                                - $.spec.ue_security_capability.encryption_algorithms
+                          - '@not':
+                              '@in':
+                                - 5G-IA2
+                                - $.spec.ue_security_capability.integrity_algorithms
+                      - conditions:
+                          - type: Registered
+                            status: "False"
+                            lastTransitionTime: '@now'
+                            reason: EncyptionNotSupported
+                            message: Encryption or integrity algorithm not supported
+                      - '@cond':
+                          - '@not':
+                              '@eq':
+                                - $.spec.ue_status.n1_mode
+                                - true
+                          - conditions:
+                              - type: Registered
+                                status: "False"
+                                lastTransitionTime: '@now'
+                                reason: StandardNotSupported
+                                message: Only 5G signaling is supported
+                          - conditions:
+                              - type: Registered
+                                status: "True"
+                                lastTransitionTime: '@now'
+                                reason: Registered
+                                message: Registration successful
+                            ue_context:
+                              '@concat':
+                                - ue_ctx_
+                                - '@hash': $.metadata.name
+      target:
+        kind: Registration

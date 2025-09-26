@@ -7,7 +7,6 @@ apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
 metadata:
   name: reg-1
-  namespace: default
 description: "UE provides identity and capabilities for initial network registration"
 spec:
   registration_type: 0x01  # Initial registration

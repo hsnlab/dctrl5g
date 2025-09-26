@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	DefaultCtrlDir = "controllers/"
+	DefaultCtrlDir = "operators/"
 )
 
 type OpSpec struct {
@@ -44,9 +44,9 @@ func New(opts Options) (*dctrl, error) {
 		logger = logr.Discard()
 	}
 
-	ctrlDir := opts.CtrlDir
-	if ctrlDir == "" {
-		ctrlDir = DefaultCtrlDir
+	opDir := opts.CtrlDir
+	if opDir == "" {
+		opDir = DefaultCtrlDir
 	}
 
 	config := &rest.Config{
@@ -70,44 +70,39 @@ func New(opts Options) (*dctrl, error) {
 	g.SetAPIServer(apiServer)
 
 	// 3. Create the operators
-	ctrlFiles, err := os.ReadDir(ctrlDir)
+	opFiles, err := os.ReadDir(opDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open controller directory %q: %w", ctrlDir, err)
+		return nil, fmt.Errorf("failed to open controller directory %q: %w", opDir, err)
 	}
 
-	for _, ctrlFile := range ctrlFiles {
-		if ctrlFile.IsDir() {
+	for _, opFile := range opFiles {
+		if opFile.IsDir() {
 			continue
 		}
 
-		filePath := filepath.Join(ctrlDir, ctrlFile.Name())
+		opFileName := opFile.Name()
+		filePath := filepath.Join(opDir, opFileName)
 
 		specFile, err := os.Open(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to open spec file for controller spec file %q: %w",
-				ctrlFile.Name(), err)
+			return nil, fmt.Errorf("failed to open spec file for operator spec file %q: %w",
+				opFileName, err)
 		}
 		defer specFile.Close()
 
 		data, err := io.ReadAll(specFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read spec file for controller spec file %q: %w",
-				ctrlFile.Name(), err)
+			return nil, fmt.Errorf("failed to read spec file for operator spec file %q: %w",
+				opFileName, err)
 		}
 
-		name, spec, init, err := parseRawSpec(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse operator spec file %q: %w",
-				ctrlFile.Name(), err)
+		op := &opv1a1.Operator{}
+		if err := yaml.Unmarshal(data, &op); err != nil {
+			return nil, fmt.Errorf("failed to parse operator spec file %q: %w", opFileName, err)
 		}
 
-		op, err := g.AddOperator(name, spec)
-		if err != nil {
-			return nil, fmt.Errorf("unable to create operator %q: %w", name, err)
-		}
-
-		if err := initOp(op, init); err != nil {
-			return nil, fmt.Errorf("unable to init operator %q: %w", name, err)
+		if _, err := g.AddOperator(op.GetName(), &op.Spec); err != nil {
+			return nil, fmt.Errorf("unable to create operator %q: %w", op.GetName(), err)
 		}
 	}
 
@@ -148,42 +143,4 @@ func (d *dctrl) Start(ctx context.Context) error {
 			return nil
 		}
 	}
-}
-
-func parseRawSpec(data []byte) (string, *opv1a1.OperatorSpec, map[string]any, error) {
-	opSpec := map[string]any{}
-	if err := yaml.Unmarshal(data, &opSpec); err != nil {
-		return "", nil, nil, fmt.Errorf("failed to parse YAML spec: %w", err)
-	}
-
-	rawName, ok := opSpec["name"]
-	if !ok {
-		return "", nil, nil, errors.New("no operator name")
-	}
-
-	name, ok := rawName.(string)
-	if !ok {
-		return "", nil, nil, errors.New("expected string for operator name")
-	}
-
-	rawSpec, ok := opSpec["spec"]
-	if !ok {
-		return "", nil, nil, errors.New("no operator spec")
-	}
-
-	spec, ok := rawSpec.(*opv1a1.OperatorSpec)
-	if !ok {
-		return "", nil, nil, errors.New("expected operator spec")
-	}
-
-	var init map[string]any
-	if rawInit, ok := opSpec["init"]; ok {
-		init, ok = rawInit.(map[string]any)
-	}
-
-	return name, spec, init, nil
-}
-
-func initOp(op *operator.Operator, init map[string]any) error {
-	return nil
 }
