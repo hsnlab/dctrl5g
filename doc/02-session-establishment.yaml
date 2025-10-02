@@ -1,5 +1,39 @@
 # PDU Session Establishment Flow - Session Management Signaling Only
 # Assumptions: UE authenticated, registered, and has secure NAS connection
+# ┌─────┐                 ┌─────┐                 ┌─────┐
+# │ UE  │                 │ AMF │                 │ SMF │
+# └──┬──┘                 └──┬──┘                 └──┬──┘
+#    │                       │                       │
+#    │ PDU Session Est Req   │                       │
+#    │ (GUTI, session params)│                       │
+#    ├──────────────────────>│                       │
+#    │                       │ [Looks up GUTI]       │
+#    │                       │ [Resolves to SUPI]    │
+#    │                       │                       │
+#    │                       │ CreateSMContext       │
+#    │                       │ (SUPI, PEI, location) │
+#    │                       ├──────────────────────>│
+#    │                       │                       │
+#    │                       │                       │ [Allocates IP]
+#    │                       │                       │ [Configures UPF]
+#    │                       │                       │ [Creates QoS flows]
+#    │                       │                       │
+#    │                       │ SMContext Response    │
+#    │                       │ (IP addr, QoS rules)  │
+#    │                       │<──────────────────────┤
+#    │                       │ [Updates UE context]  │
+#    │                       │                       │
+#    │ PDU Session Est Accept│                       │
+#    │ (IP, QoS, DNS, etc.)  │                       │
+#    │<──────────────────────┤                       │
+#    │                       │                       │
+#    │ PDU Session Est Complete                      │
+#    ├──────────────────────>│                       │
+#    │                       │ UpdateSMContext       │
+#    │                       ├──────────────────────>│
+#    │                       │                       │
+#    └───────────────────────┴───────────────────────┘
+#
 ---
 # Step 1: UE requests PDU session establishment
 # direction: "UE → AMF"

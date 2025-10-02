@@ -39,18 +39,23 @@ metadata:
   name: test-reg
   namespace: default
 spec:
-  registration_type: 0x01
-  nas_key_set_identifier:
-    tsc: 0
-    nas_ksi: 0x07
-  mobile_identity:
-    type: "SUPI"
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  mobileIdentity:
+    type: SUPI
     value: "imsi-001010123456789"
-  ue_security_capability:
-    encryption_algorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
-    integrity_algorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
-  ue_status:
-    n1_mode: true`
+  ueSecurityCapability:
+    encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ueStatus:
+    n1Mode: true
+  requestedNSSAI:
+    - sliceType: eMBB
+      sliceDifferentiator: "000001"
+    - sliceType: URLLC
+      sliceDifferentiator: "000002"`
 		reg := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), &reg)
 		Expect(err).NotTo(HaveOccurred())
@@ -90,12 +95,15 @@ metadata:
   name: test-reg
   namespace: default
 spec:
-  registration_type: 0x01
-  ue_security_capability:
-    encryption_algorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
-    integrity_algorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
-  ue_status:
-    n1_mode: true`
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  ueSecurityCapability:
+    encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ueStatus:
+    n1Mode: true`
 		reg := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), &reg)
 		Expect(err).NotTo(HaveOccurred())
@@ -136,18 +144,23 @@ metadata:
   name: test-reg
   namespace: default
 spec:
-  registration_type: 0x01
-  nas_key_set_identifier:
-    tsc: 0
-    nas_ksi: 0x07
-  mobile_identity:
-    type: "SUPI"
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  mobileIdentity:
+    type: SUPI
     value: "imsi-001010123456789"
-  ue_security_capability:
-    encryption_algorithms: ["dummy"]
-    integrity_algorithms: ["dummy"]
-  ue_status:
-    n1_mode: true`
+  ueSecurityCapability:
+    encryptionAlgorithms: ["dummy"]
+    integrityAlgorithms: ["dummy"]
+  ueStatus:
+    n1Mode: true
+  requestedNSSAI:
+    - sliceType: eMBB
+      sliceDifferentiator: "000001"
+    - sliceType: URLLC
+      sliceDifferentiator: "000002"`
 		reg := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), &reg)
 		Expect(err).NotTo(HaveOccurred())
@@ -180,7 +193,7 @@ spec:
 		Expect(cond["reason"]).To(Equal("EncyptionNotSupported"))
 	})
 
-	It("should reject a registration with an unsupported cypher", func() {
+	It("should reject a registration with an unsupported standard", func() {
 		yamlData := `
 apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
@@ -188,18 +201,24 @@ metadata:
   name: test-reg
   namespace: default
 spec:
-  registration_type: 0x01
-  nas_key_set_identifier:
-    tsc: 0
-    nas_ksi: 0x07
-  mobile_identity:
-    type: "SUPI"
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  mobileIdentity:
+    type: SUPI
     value: "imsi-001010123456789"
-  ue_security_capability:
-    encryption_algorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
-    integrity_algorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
-  ue_status:
-    n1_mode: false`
+  ueSecurityCapability:
+    encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ueStatus:
+    s1Mode: true
+    n1Mode: false
+  requestedNSSAI:
+    - sliceType: eMBB
+      sliceDifferentiator: "000001"
+    - sliceType: URLLC
+      sliceDifferentiator: "000002"`
 		reg := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), &reg)
 		Expect(err).NotTo(HaveOccurred())

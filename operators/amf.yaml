@@ -2,81 +2,90 @@ apiVersion: operator.dcontroller.io/v1alpha1
 kind: Operator
 metadata:
   name: amf
-  annotations:
-    operator.dcontroller.io/init: |
-      apiVersion: amf.operator.dcontroller.io/v1alpha1
-      kind: State
-      metadata:
-        name: state
 spec:
   controllers:
     - name: register-input
       sources:
         - kind: Registration
-          selector:
-            matchExpressions:
-              - key: state
-                operator: DoesNotExist
+          predicate: GenerationChanged
       pipeline:
         '@aggregate':
           - '@project':
               metadata:
-                name: $.metadata.name
-                namespace: $.metadata.namespace
-                labels:
-                  - state: INIT
-                annotations: $.metadata.annotations
+                name: "$.metadata.name"
+                namespace:
+                  "@definedOr": ["$.metadata.namespace", default]
               spec: $.spec
               status:
                 '@cond':
                   - '@or':
                       - '@not':
                           '@eq':
-                            - $.spec.mobile_identity.type
+                            - $.spec.mobileIdentity.type
                             - SUPI
-                      - '@isnil': $.spec.mobile_identity.value
+                      - '@isnil': $.spec.mobileIdentity.value
                   - conditions:
                       - type: Registered
                         status: "False"
-                        lastTransitionTime: '@now'
                         reason: MobileIdentityNotFound
                         message: Mobile identity is not provided
+                        lastTransitionTime: "@now"
                   - '@cond':
                       - '@or':
                           - '@not':
                               '@in':
                                 - 5G-EA2
-                                - $.spec.ue_security_capability.encryption_algorithms
+                                - $.spec.ueSecurityCapability.encryptionAlgorithms
                           - '@not':
                               '@in':
                                 - 5G-IA2
-                                - $.spec.ue_security_capability.integrity_algorithms
+                                - $.spec.ueSecurityCapability.integrityAlgorithms
                       - conditions:
                           - type: Registered
                             status: "False"
-                            lastTransitionTime: '@now'
                             reason: EncyptionNotSupported
                             message: Encryption or integrity algorithm not supported
+                            lastTransitionTime: "@now"
                       - '@cond':
                           - '@not':
                               '@eq':
-                                - $.spec.ue_status.n1_mode
+                                - $.spec.ueStatus.n1Mode
                                 - true
                           - conditions:
                               - type: Registered
                                 status: "False"
-                                lastTransitionTime: '@now'
                                 reason: StandardNotSupported
                                 message: Only 5G signaling is supported
+                                lastTransitionTime: "@now"                                
                           - conditions:
                               - type: Registered
                                 status: "True"
-                                lastTransitionTime: '@now'
                                 reason: Registered
                                 message: Registration successful
+                                lastTransitionTime: "@now"                               
                             ue_context:
                               '@concat':
                                 - ue_ctx_
                                 - '@hash': $.metadata.name
+      target:
+        kind: __reg
+    - name: register-output
+      sources:
+        - kind: Registration
+        - kind: __reg
+      pipeline:
+        '@join':
+          "@and":
+            - "@eq": ["$.Registration.metadata.name", "$.__reg.metadata.name"]
+            - "@eq": ["$.Registration.metadata.namespace", "$.__reg.metadata.namespace"]
+        '@aggregate':
+          - '@project':
+              metadata:
+                name: "$.__reg.metadata.name"
+                namespace: "$.__reg.metadata.namespace"
+                labels: "$.Registration.metadata.labels"
+                annotations: "$.Registration.metadata.annotations"
+              spec: "$.__reg.spec"
+              status: "$.__reg.status"
       target:
         kind: Registration

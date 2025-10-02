@@ -17,7 +17,7 @@ import (
 
 const (
 	APIServerPort = 8443
-	CtrlDir       = "controllers/"
+	CtrlDir       = "operators/"
 )
 
 var (

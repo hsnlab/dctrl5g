@@ -80,6 +80,11 @@ func New(opts Options) (*dctrl, error) {
 			continue
 		}
 
+		// skip non-YAML files
+		if ext := filepath.Ext(opFile.Name()); ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+
 		opFileName := opFile.Name()
 		filePath := filepath.Join(opDir, opFileName)
 
