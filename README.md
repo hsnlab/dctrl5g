@@ -4,6 +4,9 @@ A simulator for the 5G UE and control plane interactions using the declarative Î
 
 ## Getting started
 
+You will need the `dctl` command line tool to administer kubeconfigs, obtain it from
+[here](https://github.com/l7mp/dcontroller).
+
 ### Development
 
 1. Start the operators using unsafe HTTP mode:
@@ -13,7 +16,7 @@ A simulator for the 5G UE and control plane interactions using the declarative Î
 
 2. Create an admin config:
    ```bash
-   dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
+   ./dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
    ```
 
 3. Make a client request:
@@ -24,7 +27,7 @@ A simulator for the 5G UE and control plane interactions using the declarative Î
 
 ### Production
 
-1. Generate the TLS certificate (you will need the `dctl` binary for that):
+1. Generate the TLS certificate:
    ```bash
    ./dctl generate-keys
    ```
@@ -36,7 +39,7 @@ A simulator for the 5G UE and control plane interactions using the declarative Î
 
 3. Create a user config (assume the username is `user-1`):
    ```bash
-   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
+   ./dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
     --rules='[{"verbs":["get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["*"]}]' \
     > ./user-1.config
    ```
