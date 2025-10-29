@@ -4,17 +4,47 @@ A simulator for the 5G UE and control plane interactions using the declarative Î
 
 ## Getting started
 
-1. Start the operator fleet
+### Development
 
+1. Start the operators using unsafe HTTP mode:
+   ```bash
+   go run main.go --http -zap-log-level 4
+   ```
+
+2. Create an admin config:
+   ```bash
+   dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
+   ```
+
+3. Make a client request:
+   ```bash
+   export KUBECONFIG=./admin.config 
+   kubectl apply -f <registration.yaml>
+   ```
+
+### Production
+
+1. Generate the TLS certificate (you will need the `dctl` binary for that):
+   ```bash
+   ./dctl generate-keys
+   ```
+
+2. Start the operators:
    ```bash
    go run main.go -zap-log-level 4
    ```
 
-2. Make a client request:
-
+3. Create a user config (assume the username is `user-1`):
    ```bash
-   export KUBECONFIG=deploy/dcontroller-config # Use the dcontroller API server
-   kubectl apply -f <registration.yaml>        # Create a registration
+   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
+    --rules='[{"verbs":["get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["*"]}]' \
+    > ./user-1.config
+   ```
+
+4. Make a client request:
+   ```bash
+   export KUBECONFIG=./user-1.config
+   kubectl apply -f <registration.yaml>
    ```
 
 ## License

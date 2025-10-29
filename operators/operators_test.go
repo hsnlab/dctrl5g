@@ -12,7 +12,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"go.uber.org/zap/zapcore"
-	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -51,7 +50,7 @@ func startOp(ctx context.Context, opFileName string) (*operator.Operator, error)
 		return nil, fmt.Errorf("failed to open spec file for operator spec file %q: %w",
 			opFileName, err)
 	}
-	defer specFile.Close()
+	defer specFile.Close() //nolint:errcheck
 
 	data, err := io.ReadAll(specFile)
 	if err != nil {
@@ -102,11 +101,11 @@ func startOp(ctx context.Context, opFileName string) (*operator.Operator, error)
 	return op, nil
 }
 
-func tryWatch(watcher watch.Interface, d time.Duration) (watch.Event, bool) {
-	select {
-	case event := <-watcher.ResultChan():
-		return event, true
-	case <-time.After(d):
-		return watch.Event{}, false
-	}
-}
+// func tryWatch(watcher watch.Interface, d time.Duration) (watch.Event, bool) {
+// 	select {
+// 	case event := <-watcher.ResultChan():
+// 		return event, true
+// 	case <-time.After(d):
+// 		return watch.Event{}, false
+// 	}
+// }

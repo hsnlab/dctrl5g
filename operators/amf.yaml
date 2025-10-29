@@ -63,7 +63,7 @@ spec:
                                 reason: Registered
                                 message: Registration successful
                                 lastTransitionTime: "@now"                               
-                            ue_context:
+                            ueContext:
                               '@concat':
                                 - ue_ctx_
                                 - '@hash': $.metadata.name

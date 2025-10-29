@@ -6,7 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/l7mp/dcontroller v0.1.1
+	github.com/l7mp/dcontroller v0.1.2-0.20251029145332-adaf0b941f32
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	go.uber.org/zap v1.27.0
@@ -50,6 +50,7 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.24.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.26.1 // indirect

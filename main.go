@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"go.uber.org/zap/zapcore"
-	"k8s.io/apimachinery/pkg/runtime"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -21,7 +20,6 @@ const (
 )
 
 var (
-	scheme     = runtime.NewScheme()
 	version    = "dev"
 	commitHash = "n/a"
 	buildDate  = "<unknown>"
@@ -34,8 +32,25 @@ func main() {
 		StacktraceLevel: zapcore.Level(3),
 		TimeEncoder:     zapcore.RFC3339NanoTimeEncoder,
 	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
+	flags := flag.NewFlagSet("dctrl5g", flag.ExitOnError)
+	flags.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of dctrl5g:\n")
+		flags.PrintDefaults()
+	}
+	addr := flags.String("addr", "localhost", "API server bind address")
+	port := flags.Int("port", 8443, "API server port")
+	httpMode := flags.Bool("http", false, "Use insecure HTTP (no TLS)")
+	certFile := flags.String("tls-cert-file", "apiserver.crt",
+		"TLS cert file for secure mode and JWT validation (latter not required if --disable-authentication is set)")
+	keyFile := flags.String("tls-key-file", "apiserver.key", "TLS key file for secure mode")
+	disableAuthentication := flags.Bool("disable-authentication", false,
+		"Disable authentication/authorization (WARNING: allows unrestricted access)")
+	opts.BindFlags(flags)
+	if err := flags.Parse(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		flags.Usage()
+		os.Exit(2)
+	}
 
 	logger := zap.New(zap.UseFlagOptions(&opts))
 	ctrl.SetLogger(logger.WithName("dctrl5g"))
@@ -46,7 +61,12 @@ func main() {
 
 	dctrl, err := dctrl.New(dctrl.Options{
 		CtrlDir:       CtrlDir,
-		APIServerPort: APIServerPort,
+		APIServerAddr: *addr,
+		APIServerPort: *port,
+		HTTPMode:      *httpMode,
+		DisableAuth:   *disableAuthentication,
+		CertFile:      *certFile,
+		KeyFile:       *keyFile,
 		Logger:        logger,
 	})
 	if err != nil {
@@ -56,5 +76,8 @@ func main() {
 
 	ctx := ctrl.SetupSignalHandler()
 
-	dctrl.Start(ctx)
+	if err := dctrl.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
 }
