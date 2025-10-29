@@ -16,7 +16,7 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 2. Create an admin config:
    ```bash
-   ./dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
+   dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
    ```
 
 3. Make a client request:
@@ -29,7 +29,7 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 1. Generate the TLS certificate:
    ```bash
-   ./dctl generate-keys
+   dctl generate-keys
    ```
 
 2. Start the operators:
@@ -39,8 +39,8 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 3. Create a user config (assume the username is `user-1`):
    ```bash
-   ./dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
-    --rules='[{"verbs":["get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["*"]}]' \
+   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
+    --rules='[{"verbs":["create","get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["*"]}]' \
     > ./user-1.config
    ```
 
