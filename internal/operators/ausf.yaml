@@ -1,0 +1,84 @@
+# SUPI: Subscription Permanent Identifier (5G equivalent of IMSI)
+# structure:
+#   - mcc: "Mobile Country Code (3 digits)"
+#   - mnc: "Mobile Network Code (2-3 digits)"  
+#   - msin: "Mobile Subscriber Identification Number (9-10 digits)"
+# storage: "Stored in USIM/SIM card and provisioned in UDM/UDR"
+
+# SUCI: Subscription Concealed Identifier
+# structure:
+#   supi_type: "1 digit (0=IMSI, 1=NAI for non-3GPP)"
+#   home_network_id: "MCC/MNC in plaintext"
+#   routing_indicator: "1-4 digits (routes to correct UDM for MVNOs)"
+#   protection_scheme_id: "Indicates encryption method used"
+#   home_network_public_key_id: "Identifies which public key was used"
+#   scheme_output: "Encrypted MSIN portion"
+
+# GUTI: 5G Globally Unique Temporary Identity
+# structure:
+#   plmn_id: "24 bits (MCC + MNC)"
+#   amf_id: 
+#     total: "24 bits"
+#     components:
+#       amf_region_id: "8 bits"
+#       amf_set_id: "10 bits"
+#       amf_pointer: "6 bits"
+#   five_g_tmsi: "32 bits (10 LSBs must be evenly distributed for paging)"
+
+# REG:
+# 1. UE pre-registration: SUPI->SUCI
+# 2. UE registration -> AMF: sends SUCI to AUSF
+# 3. AUSF -> AMF: generates GUTI
+
+apiVersion: operator.dcontroller.io/v1alpha1
+kind: Operator
+metadata:
+  name: ausf
+spec:
+  controllers:
+    # SUCI -> SUPI mapping
+    - name: initial-suci-to-supi-table
+      sources:
+        - kind: InitSuciToSupiTable
+          type: OneShot
+      pipeline:
+        "@aggregate":
+          - "@project":
+              metadata:
+                name: suci-to-supi
+              spec:
+                - suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
+                  supi: "imsi-999010000000123"
+      target:
+        kind: SuciToSupiTable
+
+    # Handle SUPI requests
+    - name: supi-req-handler
+      sources:
+        - kind: SupiToSuciMapping
+          predicate: GenerationChanged
+        - kind: SuciToSupiTable
+      pipeline:
+        "@join": true
+        "@aggregate":
+          - "@project":
+              metadata: $.SupiToSuciMapping.metadata
+              status:
+                suci: "$.SupiToSuciMapping.spec.suci"
+                supi: "$.SuciToSupiTable.spec[?(@.suci == $.SupiToSuciMapping.spec.suci)].supi"
+                conditions:
+                  - "@cond":
+                      - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.SupiToSuciMapping.spec.suci)]"
+                      - type: Ready
+                        status: "True"
+                        reason: Ready
+                        message: Mobile identity found
+                        lastTransitionTime: "@now"
+                      - type: Ready
+                        status: "False"
+                        reason: MobileIdentityNotFound
+                        message: Mobile identity is not provided
+                        lastTransitionTime: "@now"
+      target:
+        kind: SupiToSuciMapping
+        type: Patcher

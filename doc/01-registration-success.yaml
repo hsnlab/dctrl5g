@@ -44,20 +44,12 @@ apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
 metadata:
   name: reg-1
-  labels:
-    ue.id: "imsi-001010123456789"
+  namespace: user-1
 spec:
   registrationType: initial  # Options: initial | mobility | periodic | emergency  
-  nasKeySetIdentifier:
-    typeOfSecurityContext: native  # Options: native | mapped
-    keySetIdentifier: noKeyAvailable  # Options: 0-6 (valid keys) | noKeyAvailable
   mobileIdentity:
-    type: SUPI  # Options: SUPI | GUTI | IMEI | IMEISV | TMSI
-    value: "imsi-001010123456789"
-    # Format depends on type:
-    #   SUPI: "imsi-<mcc><mnc><msin>" or "nai-<username>@<realm>"
-    #   GUTI: "<mcc>-<mnc>-<amf_region>-<amf_set>-<amf_pointer>-<tmsi>"
-    #   IMEI: "<tac>-<snr>"
+    type: SUCI  # Options: SUPI | GUTI | IMEI | IMEISV | TMSI | SUCI
+    value: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0" # mapped
   ueSecurityCapability:
     encryptionAlgorithms:  # Ordered by preference (first = most preferred)
       - 5G-EA0  # Null encryption (no protection)
@@ -69,13 +61,9 @@ spec:
       - 5G-IA1  # 128-bit SNOW 3G
       - 5G-IA2  # 128-bit AES-CMAC
       - 5G-IA3  # 128-bit ZUC
-    # Available algorithms:
-    #   Encryption: 5G-EA0 (null), 5G-EA1 (SNOW), 5G-EA2 (AES), 5G-EA3 (ZUC)
-    #   Integrity: 5G-IA0 (null), 5G-IA1 (SNOW), 5G-IA2 (AES), 5G-IA3 (ZUC)
   ueStatus:
     s1Mode: false  # EPC/LTE interworking capability
     n1Mode: true   # 5GC/NR native mode capability
-  # Optional fields
   ueNetworkCapability:  # LTE/EPS capabilities for interworking
     epsEncryptionAlgorithms:
       - EEA0  # Options: EEA0, EEA1, EEA2, EEA3
@@ -86,12 +74,6 @@ spec:
       sliceDifferentiator: "000001"  # Optional, for multiple slices of same type
     - sliceType: URLLC
       sliceDifferentiator: "000002"
-    # Slice Types:
-    #   eMBB: Enhanced Mobile Broadband (video streaming, web browsing)
-    #   URLLC: Ultra-Reliable Low Latency Communications (industrial automation, remote surgery)
-    #   MIoT: Massive IoT (sensors, smart city devices)
-    #   V2X: Vehicle-to-Everything (autonomous vehicles, traffic management)
-    #   custom: Custom slice types (1-127 for operator-specific, 128-255 reserved)
 
 ---
 # Step 2: AMF completes registration and assigns context ID
@@ -103,68 +85,42 @@ apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
 metadata:
   name: reg-1
-  namespace: default
+  namespace: user-1
 spec:
-  registrationType: initial
-  nasKeySetIdentifier:
-    typeOfSecurityContext: native
-    keySetIdentifier: noKeyAvailable
   mobileIdentity:
-    type: SUPI  
-    value: "imsi-001010123456789"
+    type: SUPI
+    value: imsi-001010123456789
+  registrationType: initial
+  requestedNSSAI:
+  - sliceDifferentiator: "000001"
+    sliceType: eMBB
+  - sliceDifferentiator: "000002"
+    sliceType: URLLC
+  ueNetworkCapability:
+    epsEncryptionAlgorithms:
+    - EEA0
+    epsIntegrityAlgorithms:
+    - EIA0
   ueSecurityCapability:
     encryptionAlgorithms:
-      - 5G-EA0
-      - 5G-EA1
-      - 5G-EA2
-      - 5G-EA3
+    - 5G-EA0
+    - 5G-EA1
+    - 5G-EA2
+    - 5G-EA3
     integrityAlgorithms:
-      - 5G-IA0  
-      - 5G-IA1  
-      - 5G-IA2  
-      - 5G-IA3  
+    - 5G-IA0
+    - 5G-IA1
+    - 5G-IA2
+    - 5G-IA3
   ueStatus:
-    s1Mode: false  # EPC/LTE interworking capability
-    n1Mode: true   # 5GC/NR native mode capability
-  ueNetworkCapability: 
-    epsEncryptionAlgorithms:
-      - EEA0
-    epsIntegrityAlgorithms:
-      - EIA0
-  requestedNSSAI:
-    - sliceType: eMBB
-      sliceDifferentiator: "000001"
-    - sliceType: URLLC
-      sliceDifferentiator: "000002"
+    n1Mode: true
+    s1Mode: false
 status:
   conditions:
-    - type: Registered
-      status: "True"
-      lastTransitionTime: "2025-09-14T00:10:55Z"
-      message: Registered
-  ue_context_id: "ue-ctx-789abc"  # Same context ID
-  nas_security_algorithms:
-    encryption: "5G-EA2"  # Selected algorithm
-    integrity: "5G-IA2"   # Selected algorithm
-  assignedIdentity:
-    type: GUTI     # Option 1: 5G-GUTI (most common)
-    guti:
-      plmnId: "00101"           # 5-6 digits: MCC (3) + MNC (2-3)
-      amfRegionId: "01"         # 8 bits: identifies AMF region (00-FF)
-      amfSetId: "001"           # 10 bits: identifies AMF set within region (000-3FF)
-      amfPointer: "00"          # 6 bits: points to specific AMF in set (00-3F)
-      tmsi: "87654321"          # 32 bits: Temporary Mobile Subscriber Identity
-  registrationArea:
-    trackingAreas:  # List of tracking areas forming a "registration zone"
-    # UE can roam freely between these TAs without notifying AMF
-      - plmnId: "00101"  # Network operator ID (MCC+MNC)
-        tac: "000001"     # Tracking Area Code - group of cells
-      - plmnId: "00101"
-        tac: "000002"
-  allowedNetworkSlices:
-    - sliceType: eMBB
-      sliceDifferentiator: "000001"
-  selectedSecurityAlgorithms:
-    encryption: 5G-EA2
-    integrity: 5G-IA2
+  - lastTransitionTime: "2025-10-30T15:44:17Z"
+    message: Registration successful
+    reason: Registered
+    status: "True"
+    type: Registered
+  ueContext: ue_ctx_cstu0d
   

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/go-logr/logr"
 	"k8s.io/client-go/rest"
@@ -20,6 +19,8 @@ import (
 	"github.com/l7mp/dcontroller/pkg/auth"
 	"github.com/l7mp/dcontroller/pkg/controller"
 	"github.com/l7mp/dcontroller/pkg/operator"
+
+	"github.com/hsnlab/dctrl5g/internal/operators/udm"
 )
 
 const (
@@ -31,7 +32,7 @@ type OpSpec struct {
 }
 
 type Options struct {
-	CtrlDir               string
+	OpFiles               []string
 	APIServerAddr         string
 	APIServerPort         int
 	DisableAuth, HTTPMode bool
@@ -39,31 +40,35 @@ type Options struct {
 	Logger                logr.Logger
 }
 
-type dctrl struct {
+type Dctrl struct {
 	*operator.Group
 	apiServer   *apiserver.APIServer
 	log, logger logr.Logger
 }
 
-func New(opts Options) (*dctrl, error) {
+func New(opts Options) (*Dctrl, error) {
 	logger := opts.Logger
 	if logger.GetSink() == nil {
 		logger = logr.Discard()
 	}
 	log := logger.WithName("dctrl")
 
-	opDir := opts.CtrlDir
-	if opDir == "" {
-		opDir = DefaultCtrlDir
+	addr := opts.APIServerAddr
+	if addr == "" {
+		addr = "localhost"
+	}
+	port := opts.APIServerPort
+	if port == 0 {
+		port = 18443
 	}
 
 	config := &rest.Config{
-		Host: fmt.Sprintf("http://0.0.0.0:%d", opts.APIServerPort),
+		Host: fmt.Sprintf("http://%s:%d", addr, port),
 	}
 
 	g := operator.NewGroup(config, logger)
 
-	apiServerConfig, err := apiserver.NewDefaultConfig("0.0.0.0", opts.APIServerPort, g.GetClient(), opts.HTTPMode, logger)
+	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, g.GetClient(), opts.HTTPMode, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the config for the embedded API server: %w", err)
 	}
@@ -96,51 +101,42 @@ func New(opts Options) (*dctrl, error) {
 	g.SetAPIServer(apiServer)
 
 	// 3. Create the operators
-	opFiles, err := os.ReadDir(opDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open controller directory %q: %w", opDir, err)
-	}
-
-	for _, opFile := range opFiles {
-		if opFile.IsDir() {
-			continue
-		}
-
-		// skip non-YAML files
-		if ext := filepath.Ext(opFile.Name()); ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-
-		opFileName := opFile.Name()
-		filePath := filepath.Join(opDir, opFileName)
-
-		specFile, err := os.Open(filePath)
+	for _, opFile := range opts.OpFiles {
+		specFile, err := os.Open(opFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open spec file for operator spec file %q: %w",
-				opFileName, err)
+				opFile, err)
 		}
 		defer specFile.Close() //nolint:errcheck
 
 		data, err := io.ReadAll(specFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read spec file for operator spec file %q: %w",
-				opFileName, err)
+				opFile, err)
 		}
 
 		op := &opv1a1.Operator{}
 		if err := yaml.Unmarshal(data, &op); err != nil {
-			return nil, fmt.Errorf("failed to parse operator spec file %q: %w", opFileName, err)
+			return nil, fmt.Errorf("failed to parse operator spec file %q: %w", opFile, err)
 		}
 
-		if _, err := g.AddOperator(op.GetName(), &op.Spec); err != nil {
+		if _, err := g.AddOperatorFromSpec(op.GetName(), &op.Spec); err != nil {
 			return nil, fmt.Errorf("unable to create operator %q: %w", op.GetName(), err)
 		}
 	}
 
-	return &dctrl{Group: g, apiServer: apiServer, log: log, logger: logger}, nil
+	// 4. Load the UDM operator
+	udm, err := udm.New(opts.KeyFile, apiServer, logger)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create operator UDM: %w", err)
+	}
+	g.AddOperator(udm.Operator)
+	apiServer.RegisterGVKs(udm.GetGVKs())
+
+	return &Dctrl{Group: g, apiServer: apiServer, log: log, logger: logger}, nil
 }
 
-func (d *dctrl) Start(ctx context.Context) error {
+func (d *Dctrl) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {

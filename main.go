@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"go.uber.org/zap/zapcore"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -16,7 +17,7 @@ import (
 
 const (
 	APIServerPort = 8443
-	CtrlDir       = "operators/"
+	CtrlDir       = "internal/operators/"
 )
 
 var (
@@ -59,8 +60,30 @@ func main() {
 	buildInfo := buildinfo.BuildInfo{Version: version, CommitHash: commitHash, BuildDate: buildDate}
 	setupLog.Info(fmt.Sprintf("starting the dctrl5g %s", buildInfo.String()))
 
+	opDirFiles, err := os.ReadDir(CtrlDir)
+	if err != nil {
+		setupLog.Error(err, "failed to open operator directory")
+		os.Exit(1)
+	}
+
+	opFiles := []string{}
+	for _, f := range opDirFiles {
+		if f.IsDir() {
+			continue
+		}
+
+		// skip non-YAML files
+		if ext := filepath.Ext(f.Name()); ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+
+		opFileName := f.Name()
+		filePath := filepath.Join(CtrlDir, opFileName)
+		opFiles = append(opFiles, filePath)
+	}
+
 	dctrl, err := dctrl.New(dctrl.Options{
-		CtrlDir:       CtrlDir,
+		OpFiles:       opFiles,
 		APIServerAddr: *addr,
 		APIServerPort: *port,
 		HTTPMode:      *httpMode,

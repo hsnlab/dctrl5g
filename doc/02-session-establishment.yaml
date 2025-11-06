@@ -44,46 +44,143 @@ apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Session
 metadata:
   name: session-1
-  namespace: default
-description: "UE requests establishment of a PDU session with QoS requirements"
+  namespace: username
+  labels:
+    ue.id: "imsi-001010000000001"
+    session.type: "ipv4"
+    slice.sst: "1"
+    ueContext: ue_ctx_cstu0d
+  annotations:
+    interface: "N1-NAS-SM"
 spec:
-  pdu_session_id: 0x05  # Session identifier (5)
-  pdu_session_type: IPv4
-    ssc_mode: 0x01  # Service and Session Continuity mode 1 (UE anchor)
-    capability_5gsm:  # 5GS Session Management capability
-      rqos: true  # Reflective QoS support
-      mh6pdu: false  # Multi-homed IPv6 PDU sessions not supported
-      ept_s1: false  # Ethernet PDU type in S1 mode not supported
-    maximum_number_of_packet_filters: 16  # Max supported packet filters per PDU session
-    sm_pdu_dn_request_container:  # Optional: specific DN requests
-      length: 0x00  # No specific DN requests
-    extended_protocol_configuration_options:
-      - container_id: 0x8021  # IPCP (Internet Protocol Control Protocol)
-        contents: "0x0101000c03060a0000010206000000000"  # IPCP Configure-Request
-      - container_id: 0x0001  # P-CSCF IPv4 address request
-        contents: ""  # Empty = request for P-CSCF address
-      - container_id: 0x0003  # DNS Server IPv4 address request
-        contents: ""  # Empty = request for DNS servers
-    requested_qos_rules:  # QoS rules UE wants to establish
-      - rule_operation_code: 0x01  # Create new QoS rule
-        dqr: false  # Default QoS rule flag
-        qos_rule_precedence: 100  # Lower value = higher precedence
-        qos_flow_identifier: 0x09  # QFI for this rule
-        packet_filter_list:
-          - packet_filter_id: 0x01
-            direction: 0x03  # Bidirectional
-            packet_filter_contents: match-all  # Default bearer - match all traffic
-    requested_qos_flow_descriptions:  # Optional QoS flow descriptions
-      - qfi: 0x09  # QoS Flow Identifier
-        operation_code: 0x01  # Create new QoS flow
+  # Session identification
+  pduSessionId: 5
+  # PDU session characteristics
+  pduSessionType: IPv4  # enum: IPv4 | IPv6 | IPv4v6 | Ethernet | Unstructured
+  # Service and Session Continuity mode
+  sscMode: SSC1  # enum: SSC1 | SSC2 | SSC3
+  # 5GS Session Management capabilities
+  capabilities:
+    reflectiveQoS: true
+    multiHomedIPv6PDU: false
+    ethernetPDUTypeS1Mode: false
+  # Maximum number of packet filters supported by UE
+  maxPacketFilters: 16
+  # Optional: DN-specific authorization information
+  dnRequestContainer: []  # List of DN-specific authorization tokens/credentials
+  # Protocol Configuration Options - semantic, typed requests
+  networkConfiguration:
+    requests:
+      # Request for IP configuration via IPCP
+      - type: IPConfiguration
+        protocol: IPCP  # Internet Protocol Control Protocol
         parameters:
-          five_qi: 0x09  # 5G QoS Identifier (9 = best effort)
-          gfbr_uplink: null  # No Guaranteed Flow Bit Rate uplink
-          gfbr_downlink: null  # No Guaranteed Flow Bit Rate downlink  
-          mfbr_uplink: null  # No Maximum Flow Bit Rate uplink
-          mfbr_downlink: null  # No Maximum Flow Bit Rate downlink
-          averaging_window: null  # Not applicable for best effort
-          eps_bearer_identity: null  # Not used in 5GC
+          requestIPAddress: true
+          requestPrimaryDNS: true
+          requestSecondaryDNS: true
+      # Request for P-CSCF (IMS/VoLTE) server addresses
+      - type: ProxyCSCF
+        addressFamily: IPv4  # enum: IPv4 | IPv6
+        # Empty/omitted value = request for address assignment
+      # Request for DNS server addresses  
+      - type: DNSServer
+        addressFamily: IPv4  # enum: IPv4 | IPv6
+        # Empty/omitted value = request for address assignment
+  # QoS specification
+  qos:
+    # QoS Flows: Define the quality of service characteristics
+    flows:
+      # Voice flow for VoLTE/VoNR calls
+      - name: voice-flow
+        # Semantic 5QI value instead of numeric
+        fiveQI: ConversationalVoice  # 5QI=1: GBR, 100ms PDB, 10^-2 PER
+        # Alternative values:
+        # - ConversationalVideo     # 5QI=2
+        # - RealTimeGaming          # 5QI=3
+        # - NonConversationalVideo  # 5QI=4
+        # - IMSSignaling            # 5QI=5
+        # - Video (Buffered)        # 5QI=6
+        # - Voice, Video, Gaming    # 5QI=7
+        # - Video (Buffered)        # 5QI=8
+        # - BestEffort              # 5QI=9 (default)
+        
+        # GBR parameters for voice
+        bitRates:
+          guaranteed:
+            uplink: "128 kbps"
+            downlink: "128 kbps"
+          maximum:
+            uplink: "128 kbps"
+            downlink: "128 kbps"
+        
+        parameters:
+          # 2 second averaging window for GBR flows
+          averagingWindow: "2s"
+          
+          # Higher priority for voice (lower number = higher priority)
+          allocationRetentionPriority:
+            priorityLevel: 1
+            preemptionCapability: MayPreempt
+            preemptionVulnerability: NotPreemptable
+      
+      # Best effort flow for general data
+      - name: best-effort-flow
+        fiveQI: BestEffort  # 5QI=9: Non-GBR
+        
+        # No bit rate guarantees for non-GBR
+        bitRates:
+          guaranteed: null
+          maximum: null
+        
+        parameters:
+          averagingWindow: null
+          
+          # Lower priority for best effort (higher number = lower priority)
+          allocationRetentionPriority:
+            priorityLevel: 9
+            preemptionCapability: MayNotPreempt
+            preemptionVulnerability: Preemptable
+    
+    # QoS Rules: Define packet classification
+    rules:
+      # Voice rule - matches SIP signaling and RTP traffic
+      - name: voice-rule
+        precedence: 10  # Higher priority (lower number)
+        default: false  # Not the default rule
+        qosFlow: voice-flow
+        
+        filters:
+          # Match SIP signaling (UDP port 5060)
+          - name: sip-signaling
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              criteria:
+                protocol: UDP
+                destinationPort: 5060
+          
+          # Match RTP voice packets (typical RTP port range)
+          - name: rtp-voice
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              criteria:
+                protocol: UDP
+                destinationPortRange:
+                  start: 16384
+                  end: 32767
+      
+      # Default rule - catches all other traffic
+      - name: default-rule
+        precedence: 255  # Lowest priority (highest number)
+        default: true    # This IS the default rule (exactly one required per session)
+        qosFlow: best-effort-flow
+        filters:
+          - name: match-all-traffic
+            direction: Bidirectional
+            match:
+              type: MatchAll  # Catch-all for remaining traffic
+
 ---
 # Step 2: AMF forwards session request to SMF
 # direction: "AMF → SMF"

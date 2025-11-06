@@ -6,7 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/l7mp/dcontroller v0.1.2-0.20251029145332-adaf0b941f32
+	github.com/l7mp/dcontroller v0.1.2-0.20251030173415-14d0fb90feae
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	go.uber.org/zap v1.27.0
