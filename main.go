@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"go.uber.org/zap/zapcore"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -15,15 +14,16 @@ import (
 	"github.com/hsnlab/dctrl5g/internal/dctrl"
 )
 
-const (
-	APIServerPort = 8443
-	CtrlDir       = "internal/operators/"
-)
+const APIServerPort = 8443
 
 var (
 	version    = "dev"
 	commitHash = "n/a"
 	buildDate  = "<unknown>"
+	OpSpecs    = []dctrl.OpSpec{
+		{Name: "amf", File: "internal/operators/amf.yaml"},
+		{Name: "ausf", File: "internal/operators/ausf.yaml"},
+	}
 )
 
 func main() {
@@ -40,7 +40,8 @@ func main() {
 	}
 	addr := flags.String("addr", "localhost", "API server bind address")
 	port := flags.Int("port", 8443, "API server port")
-	httpMode := flags.Bool("http", false, "Use insecure HTTP (no TLS)")
+	httpMode := flags.Bool("http", false, "Use HTTP instead of HTTPS (no TLS)")
+	insecure := flags.Bool("insecure", false, "Accept self-signed TLS certificates (HTTPS only)")
 	certFile := flags.String("tls-cert-file", "apiserver.crt",
 		"TLS cert file for secure mode and JWT validation (latter not required if --disable-authentication is set)")
 	keyFile := flags.String("tls-key-file", "apiserver.key", "TLS key file for secure mode")
@@ -60,33 +61,12 @@ func main() {
 	buildInfo := buildinfo.BuildInfo{Version: version, CommitHash: commitHash, BuildDate: buildDate}
 	setupLog.Info(fmt.Sprintf("starting the dctrl5g %s", buildInfo.String()))
 
-	opDirFiles, err := os.ReadDir(CtrlDir)
-	if err != nil {
-		setupLog.Error(err, "failed to open operator directory")
-		os.Exit(1)
-	}
-
-	opFiles := []string{}
-	for _, f := range opDirFiles {
-		if f.IsDir() {
-			continue
-		}
-
-		// skip non-YAML files
-		if ext := filepath.Ext(f.Name()); ext != ".yaml" && ext != ".yml" {
-			continue
-		}
-
-		opFileName := f.Name()
-		filePath := filepath.Join(CtrlDir, opFileName)
-		opFiles = append(opFiles, filePath)
-	}
-
 	dctrl, err := dctrl.New(dctrl.Options{
-		OpFiles:       opFiles,
+		OpSpecs:       OpSpecs,
 		APIServerAddr: *addr,
 		APIServerPort: *port,
 		HTTPMode:      *httpMode,
+		Insecure:      *insecure,
 		DisableAuth:   *disableAuthentication,
 		CertFile:      *certFile,
 		KeyFile:       *keyFile,

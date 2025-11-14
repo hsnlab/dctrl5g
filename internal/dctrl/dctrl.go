@@ -7,42 +7,40 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/go-logr/logr"
-	"k8s.io/client-go/rest"
-	"sigs.k8s.io/yaml"
+	runtimeConfig "sigs.k8s.io/controller-runtime/pkg/config"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
 	"github.com/l7mp/dcontroller/pkg/controller"
+	"github.com/l7mp/dcontroller/pkg/manager"
 	"github.com/l7mp/dcontroller/pkg/operator"
 
 	"github.com/hsnlab/dctrl5g/internal/operators/udm"
 )
 
-const (
-	DefaultCtrlDir = "operators/"
-)
-
+// OpSpec holds the defs for the declarative opeators. Native operators have to be loaded manually.
 type OpSpec struct {
-	Name, Spec string
+	Name, File string
 }
 
 type Options struct {
-	OpFiles               []string
-	APIServerAddr         string
-	APIServerPort         int
-	DisableAuth, HTTPMode bool
-	CertFile, KeyFile     string
-	Logger                logr.Logger
+	OpSpecs                         []OpSpec
+	APIServerAddr                   string
+	APIServerPort                   int
+	DisableAuth, HTTPMode, Insecure bool
+	CertFile, KeyFile               string
+	Logger                          logr.Logger
 }
 
 type Dctrl struct {
-	*operator.Group
+	mgr         manager.Manager
+	ops         map[string]*operator.Operator
 	apiServer   *apiserver.APIServer
+	errorChan   chan error
 	log, logger logr.Logger
 }
 
@@ -62,26 +60,36 @@ func New(opts Options) (*Dctrl, error) {
 		port = 18443
 	}
 
-	config := &rest.Config{
-		Host: fmt.Sprintf("http://%s:%d", addr, port),
-	}
+	// Step 1: Create a manager with an empty REST config.
+	off := true
+	mgr, err := manager.New(nil, manager.Options{
+		LeaderElection:         false,
+		HealthProbeBindAddress: "0",
+		// Disable global controller name uniquness test
+		Controller: runtimeConfig.Controller{
+			SkipNameValidation: &off,
+		},
+		Metrics: metricsserver.Options{
+			BindAddress: "0",
+		},
+		Logger: logger,
+	})
 
-	g := operator.NewGroup(config, logger)
-
-	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, g.GetClient(), opts.HTTPMode, logger)
+	// Step 2: Create the API server
+	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, mgr.GetClient(), opts.HTTPMode, opts.Insecure, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the config for the embedded API server: %w", err)
 	}
 
-	// Configure authentication and authorization unless explicitly disabled or running in HTTP-only mode
+	// Step 2: Configure authentication and authorization unless explicitly disabled or running in HTTP-only mode.
 	if opts.HTTPMode || opts.DisableAuth {
 		log.Info("WARNING: Running API server without authentication - unrestricted access enabled")
 	} else {
-		// Load TLS key/cert
+		// Load TLS key/cert.
 		if err := checkCert(log, opts.CertFile, opts.KeyFile); err != nil {
 			return nil, fmt.Errorf("failed to load TLS key/cert: %w", err)
 		}
-		// Load public key
+		// Load public key.
 		publicKey, err := auth.LoadPublicKey(opts.CertFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load public key: %w (hint: generate keys with "+
@@ -92,85 +100,80 @@ func New(opts Options) (*Dctrl, error) {
 		apiServerConfig.Authorizer = auth.NewCompositeAuthorizer()
 		apiServerConfig.CertFile = opts.CertFile
 		apiServerConfig.KeyFile = opts.KeyFile
+
+		log.V(2).Info("generated authentication token for internal controllers")
 	}
 
 	apiServer, err := apiserver.NewAPIServer(apiServerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the embedded API server: %w", err)
 	}
-	g.SetAPIServer(apiServer)
 
 	// 3. Create the operators
-	for _, opFile := range opts.OpFiles {
-		specFile, err := os.Open(opFile)
+	errorChan := make(chan error, 64)
+	ops := map[string]*operator.Operator{}
+	for _, opSpec := range opts.OpSpecs {
+		op, err := operator.NewFromFile(opSpec.Name, mgr, opSpec.File, operator.Options{
+			APIServer:    apiServer,
+			ErrorChannel: errorChan,
+			Logger:       logger,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to open spec file for operator spec file %q: %w",
-				opFile, err)
+			return nil, fmt.Errorf("unable to create operator %q: %w", opSpec.Name, err)
 		}
-		defer specFile.Close() //nolint:errcheck
-
-		data, err := io.ReadAll(specFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read spec file for operator spec file %q: %w",
-				opFile, err)
-		}
-
-		op := &opv1a1.Operator{}
-		if err := yaml.Unmarshal(data, &op); err != nil {
-			return nil, fmt.Errorf("failed to parse operator spec file %q: %w", opFile, err)
-		}
-
-		if _, err := g.AddOperatorFromSpec(op.GetName(), &op.Spec); err != nil {
-			return nil, fmt.Errorf("unable to create operator %q: %w", op.GetName(), err)
-		}
+		ops[opSpec.Name] = op
 	}
 
-	// 4. Load the UDM operator
-	udm, err := udm.New(opts.KeyFile, apiServer, logger)
+	// 4. Load the UDM operator. The constructor returns an actual operator (calls
+	// AddNativeController internally).
+	udmOp, err := udm.New(mgr, apiServer, udm.Options{
+		HTTPMode: opts.HTTPMode,
+		Insecure: opts.Insecure,
+		KeyFile:  opts.KeyFile,
+		Logger:   logger,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create operator UDM: %w", err)
 	}
-	g.AddOperator(udm.Operator)
-	apiServer.RegisterGVKs(udm.GetGVKs())
+	ops["udm"] = udmOp.Operator
 
-	return &Dctrl{Group: g, apiServer: apiServer, log: log, logger: logger}, nil
+	return &Dctrl{mgr: mgr, ops: ops, apiServer: apiServer, errorChan: errorChan, log: log, logger: logger}, nil
 }
 
 func (d *Dctrl) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
+	defer close(d.errorChan)
 
 	go func() {
 		d.log.V(1).Info("starting API server")
 		if err := d.apiServer.Start(ctx); err != nil {
 			d.log.Error(err, "embedded API server error")
-			cancel()
 		}
 	}()
 
 	go func() {
-		d.log.V(1).Info("starting the operator group")
-		if err := d.Group.Start(ctx); err != nil {
-			d.log.Error(err, "operator group error")
-			cancel()
+		for {
+			select {
+			case err := <-d.errorChan:
+				var operr controller.Error
+				if errors.As(err, &operr) {
+					d.log.Error(err, "controller error", "operator", operr.Operator,
+						"controller", operr.Controller)
+				} else {
+					d.log.Error(err, "unknown error")
+				}
+
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
-	for {
-		select {
-		case err := <-d.GetErrorChannel():
-			var operr controller.Error
-			if errors.As(err, &operr) {
-				d.log.Error(err, "controller error", "operator", operr.Operator,
-					"controller", operr.Controller)
-			} else {
-				d.log.Error(err, "unknown error")
-			}
-
-		case <-ctx.Done():
-			return nil
-		}
-	}
+	d.log.V(1).Info("starting the runtime manager")
+	return d.mgr.Start(ctx)
 }
+
+func (d *Dctrl) GetErrorChannel() chan error                { return d.errorChan }
+func (d *Dctrl) GetOperator(name string) *operator.Operator { return d.ops[name] }
 
 func checkCert(log logr.Logger, certFile, keyFile string) error {
 	// 1. Load the raw bytes from the certificate and key files.

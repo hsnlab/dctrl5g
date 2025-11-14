@@ -6,6 +6,7 @@ import (
 	"github.com/hsnlab/dctrl5g/internal/testsuite"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/l7mp/dcontroller/pkg/object"
 	"github.com/l7mp/dcontroller/pkg/operator"
+
+	"github.com/hsnlab/dctrl5g/internal/dctrl"
 )
 
 var _ = Describe("AMF Operator", func() {
@@ -26,7 +29,10 @@ var _ = Describe("AMF Operator", func() {
 	BeforeEach(func() {
 		ctrl.SetLogger(logger.WithName("dctrl5g-test"))
 		ctx, cancel = context.WithCancel(context.Background())
-		d, err := testsuite.StartOps(ctx, logger, "amf.yaml", "ausf.yaml")
+		d, err := testsuite.StartOps(ctx, []dctrl.OpSpec{
+			{Name: "amf", File: "amf.yaml"},
+			{Name: "ausf", File: "ausf.yaml"},
+		}, 0, logger)
 		Expect(err).NotTo(HaveOccurred())
 		op = d.GetOperator("amf")
 		Expect(op).NotTo(BeNil())
@@ -77,8 +83,11 @@ spec:
 			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
 				return false
 			}
-			_, ok := retrieved.UnstructuredContent()["status"]
-			return ok
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			return cs[0].(map[string]any)["status"] == "True"
 		}, timeout, interval).Should(BeTrue())
 
 		// check status
@@ -93,6 +102,7 @@ spec:
 		Expect(cond["status"]).To(Equal("True"))
 
 		Expect(status["guti"]).NotTo(BeNil())
+		Expect(status["config"]).NotTo(BeNil())
 	})
 
 	It("should reject a registration with an empty mobile identity", func() {

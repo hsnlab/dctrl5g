@@ -18,7 +18,8 @@ const (
 )
 
 var (
-	loglevel = -10
+	// loglevel = -10
+	loglevel = -3
 	logger   = zap.New(zap.UseFlagOptions(&zap.Options{
 		Development:     true,
 		DestWriter:      GinkgoWriter,

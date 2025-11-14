@@ -30,55 +30,51 @@
 # 2. UE registration -> AMF: sends SUCI to AUSF
 # 3. AUSF -> AMF: generates GUTI
 
-apiVersion: operator.dcontroller.io/v1alpha1
-kind: Operator
-metadata:
-  name: ausf
-spec:
-  controllers:
-    # SUCI -> SUPI mapping
-    - name: initial-suci-to-supi-table
-      sources:
-        - kind: InitSuciToSupiTable
-          type: OneShot
-      pipeline:
-        "@aggregate":
-          - "@project":
-              metadata:
-                name: suci-to-supi
-              spec:
-                - suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
-                  supi: "imsi-999010000000123"
-      target:
-        kind: SuciToSupiTable
+controllers:
+  # SUCI -> SUPI mapping
+  - name: initial-suci-to-supi-table
+    sources:
+      - kind: InitSuciToSupiTable
+        type: OneShot
+    pipeline:
+      "@aggregate":
+        - "@project":
+            metadata:
+              name: suci-to-supi
+              namespace: default
+            spec:
+              - suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
+                supi: "imsi-999010000000123"
+    target:
+      kind: SuciToSupiTable
 
-    # Handle SUPI requests
-    - name: supi-req-handler
-      sources:
-        - kind: SupiToSuciMapping
-          predicate: GenerationChanged
-        - kind: SuciToSupiTable
-      pipeline:
-        "@join": true
-        "@aggregate":
-          - "@project":
-              metadata: $.SupiToSuciMapping.metadata
-              status:
-                suci: "$.SupiToSuciMapping.spec.suci"
-                supi: "$.SuciToSupiTable.spec[?(@.suci == $.SupiToSuciMapping.spec.suci)].supi"
-                conditions:
-                  - "@cond":
-                      - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.SupiToSuciMapping.spec.suci)]"
-                      - type: Ready
-                        status: "True"
-                        reason: Ready
-                        message: Mobile identity found
-                        lastTransitionTime: "@now"
-                      - type: Ready
-                        status: "False"
-                        reason: MobileIdentityNotFound
-                        message: Mobile identity is not provided
-                        lastTransitionTime: "@now"
-      target:
-        kind: SupiToSuciMapping
-        type: Patcher
+  # Handle SUPI requests
+  - name: supi-req-handler
+    sources:
+      - kind: SuciToSupiMapping
+        predicate: GenerationChanged
+      - kind: SuciToSupiTable
+    pipeline:
+      "@join": true
+      "@aggregate":
+        - "@project":
+            metadata: $.SuciToSupiMapping.metadata
+            status:
+              suci: "$.SuciToSupiMapping.spec.suci"
+              supi: "$.SuciToSupiTable.spec[?(@.suci == $.SuciToSupiMapping.spec.suci)].supi"
+              conditions:
+                - "@cond":
+                    - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.SuciToSupiMapping.spec.suci)]"
+                    - type: Ready
+                      status: "True"
+                      reason: Ready
+                      message: Mobile identity found
+                      lastTransitionTime: "@now"
+                    - type: Ready
+                      status: "False"
+                      reason: MobileIdentityNotFound
+                      message: Mobile identity is not provided
+                      lastTransitionTime: "@now"
+    target:
+      kind: SuciToSupiMapping
+      type: Patcher

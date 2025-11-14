@@ -16,6 +16,7 @@ import (
 	"github.com/l7mp/dcontroller/pkg/object"
 	"github.com/l7mp/dcontroller/pkg/operator"
 
+	"github.com/hsnlab/dctrl5g/internal/dctrl"
 	"github.com/hsnlab/dctrl5g/internal/testsuite"
 )
 
@@ -30,7 +31,9 @@ var _ = Describe("AUSF Operator", func() {
 	BeforeEach(func() {
 		ctrl.SetLogger(logger.WithName("dctrl5g-test"))
 		ctx, cancel = context.WithCancel(context.Background())
-		d, err := testsuite.StartOps(ctx, logger, "ausf.yaml")
+		d, err := testsuite.StartOps(ctx, []dctrl.OpSpec{
+			{Name: "ausf", File: "ausf.yaml"},
+		}, 0, logger)
 		Expect(err).NotTo(HaveOccurred())
 		op = d.GetOperator("ausf")
 		Expect(op).NotTo(BeNil())
@@ -60,7 +63,7 @@ var _ = Describe("AUSF Operator", func() {
 	It("should handle a valid SUPI request", func() {
 		yamlData := `
 apiVersion: ausf.view.dcontroller.io/v1alpha1
-kind: SupiToSuciMapping
+kind: SuciToSupiMapping
 metadata:
   name: test-req
 spec:
@@ -71,7 +74,7 @@ spec:
 		err = c.Create(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
-		obj := object.NewViewObject("ausf", "SupiToSuciMapping")
+		obj := object.NewViewObject("ausf", "SuciToSupiMapping")
 		Eventually(func() bool {
 			err := c.Get(ctx, types.NamespacedName{Name: "test-req"}, obj)
 			if err != nil {
@@ -103,7 +106,7 @@ spec:
 	It("should fail an valid SUPI request", func() {
 		yamlData := `
 apiVersion: ausf.view.dcontroller.io/v1alpha1
-kind: SupiToSuciMapping
+kind: SuciToSupiMapping
 metadata:
   name: test-req-fail
 spec:
@@ -114,7 +117,7 @@ spec:
 		err = c.Create(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
-		obj := object.NewViewObject("ausf", "SupiToSuciMapping")
+		obj := object.NewViewObject("ausf", "SuciToSupiMapping")
 		Eventually(func() bool {
 			err := c.Get(ctx, types.NamespacedName{Name: "test-req-fail"}, obj)
 			if err != nil {

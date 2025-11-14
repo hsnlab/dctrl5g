@@ -7,7 +7,6 @@ package udm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,15 +16,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	runtimeMgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/yaml"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
-	"github.com/l7mp/dcontroller/pkg/manager"
+	dcontroller "github.com/l7mp/dcontroller/pkg/controller"
 	"github.com/l7mp/dcontroller/pkg/object"
 	"github.com/l7mp/dcontroller/pkg/operator"
 	"github.com/l7mp/dcontroller/pkg/predicate"
@@ -37,67 +38,69 @@ const (
 	// RBACRules = `[{"verbs":["*"],"apiGroups":["*"],"resources":[]}]`
 )
 
+type Options struct {
+	HTTPMode, Insecure bool
+	KeyFile            string
+	Logger             logr.Logger
+}
+
 type UDM struct {
 	*operator.Operator
 	c *udmController
 }
 
-func New(keyFile string, apiServer *apiserver.APIServer, logger logr.Logger) (*UDM, error) {
-	log := logger.WithName("udm")
-
-	mgr, err := manager.New(ctrl.GetConfigOrDie(), OperatorName, manager.Options{})
-	if err != nil {
-		return nil, err
-	}
+func New(mgr runtimeMgr.Manager, apiServer *apiserver.APIServer, opts Options) (*UDM, error) {
+	log := opts.Logger.WithName("udm")
 
 	// Load the operator from file
 	errorChan := make(chan error, 16)
-	opts := operator.Options{
+	op := operator.New(OperatorName, mgr, operator.Options{
 		APIServer:    apiServer,
 		ErrorChannel: errorChan,
-		Logger:       logger,
-	}
-
-	op := operator.New(OperatorName, mgr, &opv1a1.OperatorSpec{}, opts)
+		Logger:       opts.Logger,
+	})
 
 	// Create the udm controller
-	c, err := NewUdmController(mgr, keyFile, apiServer.GetServerAddress(), logger)
+	c, err := NewUdmController(mgr, apiServer.GetServerAddress(), opts)
 	if err != nil {
 		return nil, err
 	}
 
 	log.Info("created udm controller")
 
+	// Add native controller to the operator and export GVKs to the API server.
+	op.AddNativeController("config-ctrl", c.ctrl, c.gvks)
+
 	return &UDM{Operator: op, c: c}, nil
 }
 
-func (u *UDM) GetGVKs() []schema.GroupVersionKind {
-	return u.c.gvks
-}
+func (u *UDM) GetGVKs() []schema.GroupVersionKind { return u.c.gvks }
 
 // udmController implements the udm controller
 type udmController struct {
 	client.Client
-	keyFile       string
+	opts          Options
 	serverAddress string
 	generator     *auth.TokenGenerator
+	ctrl          dcontroller.RuntimeController
 	gvks          []schema.GroupVersionKind
 	log           logr.Logger
 }
 
-func NewUdmController(mgr *manager.Manager, keyFile, serverAddress string, log logr.Logger) (*udmController, error) {
-	privateKey, err := auth.LoadPrivateKey(keyFile)
+func NewUdmController(mgr runtimeMgr.Manager, serverAddress string, opts Options) (*udmController, error) {
+	privateKey, err := auth.LoadPrivateKey(opts.KeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load private key %q: %w", keyFile, err)
+		return nil, fmt.Errorf("failed to load private key %q: %w", opts.KeyFile, err)
 	}
 	generator := auth.NewTokenGenerator(privateKey)
 
 	r := &udmController{
 		Client:        mgr.GetClient(),
-		keyFile:       keyFile,
+		opts:          opts,
 		generator:     generator,
 		serverAddress: serverAddress,
-		log:           log.WithName("udm-ctrl"),
+		gvks:          []schema.GroupVersionKind{},
+		log:           opts.Logger.WithName("udm-ctrl"),
 	}
 
 	on := true
@@ -108,6 +111,7 @@ func NewUdmController(mgr *manager.Manager, keyFile, serverAddress string, log l
 	if err != nil {
 		return nil, err
 	}
+	r.ctrl = c
 
 	p := predicate.BasicPredicate("GenerationChanged")
 	s := reconciler.NewSource(mgr, OperatorName, opv1a1.Source{
@@ -189,20 +193,20 @@ func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error)
 		ClusterName:      "dctrl5g",
 		ContextName:      "dctrl5g",
 		DefaultNamespace: "default",
-		Insecure:         true,
-		HTTPMode:         false,
+		Insecure:         r.opts.Insecure,
+		HTTPMode:         r.opts.HTTPMode,
 	}
 
 	config := auth.GenerateKubeconfig(r.serverAddress, guti, token, kubeconfigOpts)
 
 	// convert to unstructured
-	jsonData, err := json.Marshal(config)
+	yamlData, err := clientcmd.Write(*config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config to JSON: %w", err)
+		return nil, fmt.Errorf("failed to write kubeconfig YAML: %w", err)
 	}
 
 	kubeconfig := map[string]any{}
-	if err := json.Unmarshal(jsonData, &kubeconfig); err != nil {
+	if err := yaml.Unmarshal(yamlData, &kubeconfig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config from JSON: %w", err)
 	}
 
@@ -211,6 +215,13 @@ func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error)
 }
 
 func (r *udmController) setStatus(ctx context.Context, obj object.Object, result, reason, message string, config map[string]any) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels["state"] = "ConfigAvailable"
+	obj.SetLabels(labels)
+
 	condition := map[string]any{
 		"lastTransitionTime": time.Now().String(),
 		"type":               "Ready",

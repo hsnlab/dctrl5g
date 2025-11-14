@@ -37,16 +37,16 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
    go run main.go -zap-log-level 4
    ```
 
-3. Create a user config (assume the username is `user-1`):
+3. Create initial user config (assume the username is `user-1`), which will only allow the user to register:
    ```bash
-   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
-    --rules='[{"verbs":["create","get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["*"]}]' \
-    > ./user-1.config
+   dctl generate-config --user=user-1 --namespaces=default --insecure \
+    --rules='[{"verbs":["create","get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
+    > ./user-1-initial.config
    ```
 
 4. Make a client request:
    ```bash
-   export KUBECONFIG=./user-1.config
+   export KUBECONFIG=./user-1.initial.config
    kubectl apply -f <registration.yaml>
    ```
 

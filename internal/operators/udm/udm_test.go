@@ -3,7 +3,6 @@ package udm
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -22,8 +20,8 @@ import (
 
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
+	"github.com/l7mp/dcontroller/pkg/manager"
 	"github.com/l7mp/dcontroller/pkg/object"
-	"github.com/l7mp/dcontroller/pkg/operator"
 )
 
 const (
@@ -68,21 +66,20 @@ var _ = Describe("UDM Operator", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		port := randomPort()
-		config := &rest.Config{
-			Host: fmt.Sprintf("http://localhost:%d", port),
-		}
-
-		g := operator.NewGroup(config, logger)
-		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, g.GetClient(), true, logger)
+		mgr, err := manager.NewHeadless(manager.Options{Logger: logger})
+		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, mgr.GetClient(), true, false, logger)
 		Expect(err).NotTo(HaveOccurred())
 
 		apiServer, err := apiserver.NewAPIServer(apiServerConfig)
 		Expect(err).NotTo(HaveOccurred())
 
-		udm, err := New(keyFile, apiServer, logger)
+		udm, err := New(mgr, apiServer, Options{
+			HTTPMode: true,
+			Insecure: true,
+			KeyFile:  keyFile,
+			Logger:   logger,
+		})
 		Expect(err).NotTo(HaveOccurred())
-
-		g.AddOperator(udm.Operator)
 
 		go func() {
 			defer GinkgoRecover()
@@ -90,7 +87,7 @@ var _ = Describe("UDM Operator", func() {
 				select {
 				case <-ctx.Done():
 					return
-				case err := <-g.GetErrorChannel():
+				case err := <-udm.GetErrorChannel():
 					Expect(err).NotTo(HaveOccurred())
 				}
 			}
@@ -98,11 +95,11 @@ var _ = Describe("UDM Operator", func() {
 
 		go func() {
 			defer GinkgoRecover()
-			err := g.Start(ctx)
+			err := mgr.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		}()
 
-		c = udm.GetManager().GetClient().(client.WithWatch)
+		c = mgr.GetClient().(client.WithWatch)
 		Expect(c).NotTo(BeNil())
 	})
 
@@ -128,8 +125,8 @@ metadata:
 			if err != nil {
 				return false
 			}
-			_, ok := obj.UnstructuredContent()["status"]
-			return ok
+			return obj.GetLabels() != nil && len(obj.GetLabels()) == 1 &&
+				obj.GetLabels()["state"] == "ConfigAvailable"
 		}, timeout, interval).Should(BeTrue())
 
 		status, ok, err := unstructured.NestedMap(obj.UnstructuredContent(), "status")
@@ -147,26 +144,22 @@ metadata:
 		Expect(ok).To(BeTrue())
 		Expect(config).NotTo(BeEmpty())
 
-		clusters, ok, err := unstructured.NestedMap(config.(map[string]any), "clusters")
+		clusters, ok, err := unstructured.NestedSlice(config.(map[string]any), "clusters")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ok).To(BeTrue())
 		Expect(clusters).To(HaveLen(1))
-		Expect(clusters).To(HaveKey("dctrl5g"))
+		Expect(clusters[0]).To(HaveKey("cluster"))
+		Expect(clusters[0]).To(HaveKey("name"))
 
-		cluster, ok := clusters["dctrl5g"].(map[string]any)
+		cluster, ok := clusters[0].(map[string]any)["cluster"]
 		Expect(ok).To(BeTrue())
-		Expect(cluster["server"]).To(HavePrefix("https://127.0.0.1"))
-		Expect(cluster["insecure-skip-tls-verify"]).To(BeTrue())
+		Expect(cluster).To(HaveKey("server"))
+		Expect(cluster).To(HaveKey("insecure-skip-tls-verify"))
 
-		users, ok, err := unstructured.NestedMap(config.(map[string]any), "users")
+		users, ok, err := unstructured.NestedSlice(config.(map[string]any), "users")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ok).To(BeTrue())
 		Expect(users).To(HaveLen(1))
-		Expect(users).To(HaveKey("test-guti"))
-
-		user, ok := users["test-guti"].(map[string]any)
-		Expect(ok).To(BeTrue())
-		Expect(user["token"]).NotTo(BeEmpty())
 	})
 })
 

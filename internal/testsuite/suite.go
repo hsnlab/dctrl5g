@@ -20,7 +20,7 @@ const (
 	certFile = "apiserver.crt"
 )
 
-func StartOps(ctx context.Context, logger logr.Logger, opFiles ...string) (*dctrl.Dctrl, error) {
+func StartOps(ctx context.Context, opSpecs []dctrl.OpSpec, port int, logger logr.Logger) (*dctrl.Dctrl, error) {
 	cert, key, err := auth.GenerateSelfSignedCertWithSANs([]string{"localhost"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate keys: %w", err)
@@ -29,10 +29,13 @@ func StartOps(ctx context.Context, logger logr.Logger, opFiles ...string) (*dctr
 		return nil, fmt.Errorf("failed to write key/cert into file %q/%q: %w", keyFile, certFile, err)
 	}
 
+	if port == 0 {
+		port = randomPort()
+	}
+
 	d, err := dctrl.New(dctrl.Options{
-		// Registration needs the AUSF for SUPI discovery
-		OpFiles:       opFiles,
-		APIServerPort: randomPort(),
+		OpSpecs:       opSpecs,
+		APIServerPort: port,
 		KeyFile:       keyFile,
 		HTTPMode:      true,
 		DisableAuth:   true,
