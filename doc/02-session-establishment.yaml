@@ -4,13 +4,13 @@
 # │ UE  │                 │ AMF │                 │ SMF │
 # └──┬──┘                 └──┬──┘                 └──┬──┘
 #    │                       │                       │
-#    │ PDU Session Est Req   │                       │
+#    │ Session  Req          │                       │
 #    │ (GUTI, session params)│                       │
 #    ├──────────────────────>│                       │
 #    │                       │ [Looks up GUTI]       │
 #    │                       │ [Resolves to SUPI]    │
 #    │                       │                       │
-#    │                       │ CreateSMContext       │
+#    │                       │ SessionContext        │
 #    │                       │ (SUPI, PEI, location) │
 #    │                       ├──────────────────────>│
 #    │                       │                       │
@@ -18,22 +18,16 @@
 #    │                       │                       │ [Configures UPF]
 #    │                       │                       │ [Creates QoS flows]
 #    │                       │                       │
-#    │                       │ SMContext Response    │
+#    │                       │ SessionContext Resp   │
 #    │                       │ (IP addr, QoS rules)  │
 #    │                       │<──────────────────────┤
 #    │                       │ [Updates UE context]  │
 #    │                       │                       │
-#    │ PDU Session Est Accept│                       │
+#    │ Session Resp          │                       │
 #    │ (IP, QoS, DNS, etc.)  │                       │
 #    │<──────────────────────┤                       │
 #    │                       │                       │
-#    │ PDU Session Est Complete                      │
-#    ├──────────────────────>│                       │
-#    │                       │ UpdateSMContext       │
-#    │                       ├──────────────────────>│
-#    │                       │                       │
 #    └───────────────────────┴───────────────────────┘
-#
 ---
 # Step 1: UE requests PDU session establishment
 # direction: "UE → AMF"
