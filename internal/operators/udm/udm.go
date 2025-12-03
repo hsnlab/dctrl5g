@@ -14,7 +14,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -143,38 +142,51 @@ func NewUdmController(mgr runtimeMgr.Manager, serverAddress string, opts Options
 func (r *udmController) Reconcile(ctx context.Context, req reconciler.Request) (reconcile.Result, error) {
 	r.log.Info("Reconciling", "request", req.String())
 
-	switch req.EventType {
-	case object.Added, object.Updated, object.Upserted:
-		obj := object.NewViewObject(OperatorName, req.GVK.Kind)
-		if err := r.Get(ctx, types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, obj); err != nil {
-			r.log.Error(err, "failed to get added/updated object", "delta-type", req.EventType)
-			return reconcile.Result{}, err
-		}
+	// switch req.EventType {
+	// case object.Added, object.Updated, object.Upserted:
+	// 	obj := object.NewViewObject(OperatorName, req.GVK.Kind)
+	// 	if err := r.Get(ctx, types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, obj); err != nil {
+	// 		r.log.Error(err, "failed to get added/updated object", "delta-type", req.EventType)
+	// 		return reconcile.Result{}, err
+	// 	}
 
-		name := obj.GetName()
-		namespace := obj.GetNamespace()
+	// 	name := obj.GetName()
+	// 	namespace := obj.GetNamespace()
 
-		r.log.Info("Add/update Config request object", "name", name, "namespace", namespace)
+	// 	r.log.Info("Add/update Config request object", "name", name, "namespace", namespace)
 
-		config, err := r.getKubeConfig(obj)
-		if err != nil {
-			r.setStatus(ctx, obj, "False", "ConfigUnavailable", "Failed to generate config", nil)
-			return reconcile.Result{},
-				fmt.Errorf("failed to generate config: %w", err)
-		}
+	// 	config, err := r.getKubeConfig(obj)
+	// 	if err != nil {
+	// 		r.setStatus(ctx, obj, "False", "ConfigUnavailable", "Failed to generate config", nil)
+	// 		return reconcile.Result{},
+	// 			fmt.Errorf("failed to generate config: %w", err)
+	// 	}
 
-		r.setStatus(ctx, obj, "True", "Ready", "Succesfully generated config", config)
+	// 	r.setStatus(ctx, obj, "True", "Ready", "Succesfully generated config", config)
 
-	case object.Deleted:
-		r.log.Info("Delete Config object", "name", req.Name, "namespace", req.Namespace)
+	// case object.Deleted:
+	// 	r.log.Info("Delete Config object", "name", req.Name, "namespace", req.Namespace)
 
-		// do nothing
+	// 	// do nothing
 
-	default:
-		r.log.Info("Unhandled event", "name", req.Name, "namespace", req.Namespace, "type", req.EventType)
+	// default:
+	// 	r.log.Info("Unhandled event", "name", req.Name, "namespace", req.Namespace, "type", req.EventType)
+	// }
+
+	obj := req.Object
+	name := obj.GetName()
+	namespace := obj.GetNamespace()
+
+	r.log.Info("Add/update Config request object", "name", name, "namespace", namespace)
+
+	config, err := r.getKubeConfig(obj)
+	if err != nil {
+		r.setStatus(ctx, obj, "False", "ConfigUnavailable", "Failed to generate config", nil)
+		return reconcile.Result{},
+			fmt.Errorf("failed to generate config: %w", err)
 	}
 
-	r.log.Info("Reconciliation done")
+	r.setStatus(ctx, obj, "True", "Ready", "Succesfully generated config", config)
 
 	return reconcile.Result{}, nil
 }
@@ -219,7 +231,7 @@ func (r *udmController) setStatus(ctx context.Context, obj object.Object, result
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	labels["state"] = "ConfigAvailable"
+	labels["state"] = "Ready"
 	obj.SetLabels(labels)
 
 	condition := map[string]any{

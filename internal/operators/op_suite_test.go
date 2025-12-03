@@ -19,7 +19,7 @@ const (
 
 var (
 	// loglevel = -10
-	loglevel = -3
+	loglevel = -1
 	logger   = zap.New(zap.UseFlagOptions(&zap.Options{
 		Development:     true,
 		DestWriter:      GinkgoWriter,
@@ -32,6 +32,22 @@ var (
 func TestManager(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "5G Operators")
+}
+
+func findCondition(conds []any, name string) map[string]string {
+	for _, v := range conds {
+		c := v.(map[string]any)
+		if c != nil && c["type"].(string) == name {
+			ret := map[string]string{}
+			for n, e := range c {
+				if e != nil {
+					ret[n] = e.(string)
+				}
+			}
+			return ret
+		}
+	}
+	return nil
 }
 
 // func tryWatch(watcher watch.Interface, d time.Duration) (watch.Event, bool) {

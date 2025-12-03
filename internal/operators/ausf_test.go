@@ -2,12 +2,12 @@ package operators
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -63,9 +63,10 @@ var _ = Describe("AUSF Operator", func() {
 	It("should handle a valid SUPI request", func() {
 		yamlData := `
 apiVersion: ausf.view.dcontroller.io/v1alpha1
-kind: SuciToSupiMapping
+kind: MobileIdentity
 metadata:
-  name: test-req
+  name: test-reg
+  namespace: default
 spec:
   suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"`
 		req := object.New()
@@ -74,19 +75,35 @@ spec:
 		err = c.Create(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
-		obj := object.NewViewObject("ausf", "SuciToSupiMapping")
+		retrieved := object.NewViewObject("ausf", "MobileIdentity")
+		object.SetName(retrieved, "default", "test-reg")
 		Eventually(func() bool {
-			err := c.Get(ctx, types.NamespacedName{Name: "test-req"}, obj)
-			if err != nil {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
+				fmt.Println("AAAAAAA", object.Dump(retrieved))
 				return false
 			}
-			_, ok := obj.UnstructuredContent()["status"]
-			return ok
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] != "Pending"
 		}, timeout, interval).Should(BeTrue())
 
-		status, ok, err := unstructured.NestedMap(obj.UnstructuredContent(), "status")
-		Expect(err).NotTo(HaveOccurred())
+		// check status
+		Expect(retrieved.GetLabels()["state"]).To(Equal("Ready"))
+
+		status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
 		Expect(ok).To(BeTrue())
+
+		conds, ok := status["conditions"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
+		Expect(cond["status"]).To(Equal("True"))
 
 		suci, ok := status["suci"]
 		Expect(ok).To(BeTrue())
@@ -94,55 +111,50 @@ spec:
 		supi, ok := status["supi"]
 		Expect(ok).To(BeTrue())
 		Expect(supi.(string)).To(Equal("imsi-999010000000123"))
-
-		conds, ok := status["conditions"].([]any)
-		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
-		cond := conds[0].(map[string]any)
-		Expect(cond["type"]).To(Equal("Ready"))
-		Expect(cond["status"]).To(Equal("True"))
 	})
 
-	It("should fail an valid SUPI request", func() {
+	It("should reject an invalid SUPI request", func() {
 		yamlData := `
 apiVersion: ausf.view.dcontroller.io/v1alpha1
-kind: SuciToSupiMapping
+kind: MobileIdentity
 metadata:
-  name: test-req-fail
+  name: test-reg
+  namespace: default
 spec:
-  suci: "suci-dummy"`
+  suci: "dummy"`
 		req := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), req)
 		Expect(err).NotTo(HaveOccurred())
 		err = c.Create(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 
-		obj := object.NewViewObject("ausf", "SuciToSupiMapping")
+		retrieved := object.NewViewObject("ausf", "MobileIdentity")
+		object.SetName(retrieved, "default", "test-reg")
 		Eventually(func() bool {
-			err := c.Get(ctx, types.NamespacedName{Name: "test-req-fail"}, obj)
-			if err != nil {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
 				return false
 			}
-			_, ok := obj.UnstructuredContent()["status"]
-			return ok
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] != "Pending"
 		}, timeout, interval).Should(BeTrue())
 
-		status, ok, err := unstructured.NestedMap(obj.UnstructuredContent(), "status")
-		Expect(err).NotTo(HaveOccurred())
+		// check status
+		Expect(retrieved.GetLabels()["state"]).To(Equal("Ready"))
+		status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
 		Expect(ok).To(BeTrue())
-
-		suci, ok := status["suci"]
-		Expect(ok).To(BeTrue())
-		Expect(suci.(string)).To(Equal("suci-dummy"))
-		supi, ok := status["supi"]
-		Expect(ok).To(BeTrue())
-		Expect(supi).To(BeNil())
 
 		conds, ok := status["conditions"].([]any)
 		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
-		cond := conds[0].(map[string]any)
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
 		Expect(cond["type"]).To(Equal("Ready"))
 		Expect(cond["status"]).To(Equal("False"))
+		Expect(cond["reason"]).To(Equal("MobileIdentityNotFound"))
 	})
 })

@@ -126,7 +126,7 @@ metadata:
 				return false
 			}
 			return obj.GetLabels() != nil && len(obj.GetLabels()) == 1 &&
-				obj.GetLabels()["state"] == "ConfigAvailable"
+				obj.GetLabels()["state"] == "Ready"
 		}, timeout, interval).Should(BeTrue())
 
 		status, ok, err := unstructured.NestedMap(obj.UnstructuredContent(), "status")

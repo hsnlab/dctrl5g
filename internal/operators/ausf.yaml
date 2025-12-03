@@ -50,19 +50,24 @@ controllers:
   # Handle SUPI requests
   - name: supi-req-handler
     sources:
-      - kind: SuciToSupiMapping
+      - kind: MobileIdentity
         predicate: GenerationChanged
       - kind: SuciToSupiTable
     pipeline:
       - "@join": true
       - "@project":
-          metadata: $.SuciToSupiMapping.metadata
+          metadata:
+            name: $.MobileIdentity.metadata.name
+            namespace: $.MobileIdentity.metadata.namespace
+            labels:
+              state: Ready
+          spec: $.MobileIdentity.spec
           status:
-            suci: "$.SuciToSupiMapping.spec.suci"
-            supi: "$.SuciToSupiTable.spec[?(@.suci == $.SuciToSupiMapping.spec.suci)].supi"
+            suci: "$.MobileIdentity.spec.suci"
+            supi: "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)].supi"
             conditions:
               - "@cond":
-                  - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.SuciToSupiMapping.spec.suci)]"
+                  - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)]"
                   - type: Ready
                     status: "True"
                     reason: Ready
@@ -74,5 +79,5 @@ controllers:
                     message: Mobile identity is not provided
                     lastTransitionTime: "@now"
     target:
-      kind: SuciToSupiMapping
+      kind: MobileIdentity
       type: Patcher

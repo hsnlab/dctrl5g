@@ -3,8 +3,19 @@ kind: Registration
 metadata:
   name: user-1
   namespace: user-1
+  labels:
+    # Registration area (TAI where registration initiated)
+    tracking.area: "tai-001-01-000001"
+    # Equipment type (set after PEI check)
+    equipment.type: "smartphone"  # enum: smartphone | iot | vehicle | etc
+  annotations:
+    # Protocol interface
+    interface: "N1-NAS-MM"
+    # RAN information
+    ran.node: "gnb-site-4-sector-2"
 spec:
   registrationType: initial  # Options: initial | mobility | periodic | emergency  
+  access.type: "3gpp"  # enum: 3gpp | non-3gpp | both
   mobileIdentity:
     type: SUCI  # Options: SUCI | SUPI | GUTI | IMEI | IMEISV | TMSI
     value: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"

@@ -80,29 +80,157 @@ spec:
 		retrieved := object.NewViewObject("amf", "Registration")
 		object.SetName(retrieved, "default", "test-reg")
 		Eventually(func() bool {
-			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
 				return false
 			}
 			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
 			if err != nil || !ok {
 				return false
 			}
-			return cs[0].(map[string]any)["status"] == "True"
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] == "True"
 		}, timeout, interval).Should(BeTrue())
 
 		// check status
 		status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
 		Expect(ok).To(BeTrue())
-
 		conds, ok := status["conditions"].([]any)
 		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
-		cond := conds[0].(map[string]any)
-		Expect(cond["type"]).To(Equal("Registered"))
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
 		Expect(cond["status"]).To(Equal("True"))
 
-		Expect(status["guti"]).NotTo(BeNil())
-		Expect(status["config"]).NotTo(BeNil())
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "Authenticated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Authenticated"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "SubscriptionInfoRetrieved")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("SubscriptionInfoRetrieved"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "NetworkSliceSelected")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("NetworkSliceSelected"))
+		Expect(cond["status"]).To(Equal("True"))
+	})
+
+	It("should reject a registration with invalid reg-type", func() {
+		yamlData := `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: test-reg
+  namespace: default
+spec:
+  registrationType: dummy`
+		reg := object.New()
+		err := yaml.Unmarshal([]byte(yamlData), &reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = c.Create(ctx, reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		// wait until we get an object with nonzero status
+		retrieved := object.NewViewObject("amf", "Registration")
+		object.SetName(retrieved, "default", "test-reg")
+		Eventually(func() bool {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
+				return false
+			}
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Validated")
+			return r != nil && r["status"] == "False"
+		}, timeout, interval).Should(BeTrue())
+
+		// check status
+		status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		conds, ok := status["conditions"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
+		Expect(cond["status"]).To(Equal("False"))
+
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("False"))
+		Expect(cond["reason"]).To(Equal("InvalidRegistrationType"))
+	})
+
+	It("should reject a registration with invalid standard", func() {
+		yamlData := `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: test-reg
+  namespace: default
+spec:
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  ueSecurityCapability:
+    encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ueStatus:
+    n1Mode: false`
+		reg := object.New()
+		err := yaml.Unmarshal([]byte(yamlData), &reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = c.Create(ctx, reg)
+		Expect(err).NotTo(HaveOccurred())
+
+		// wait until we get an object with nonzero status
+		retrieved := object.NewViewObject("amf", "Registration")
+		object.SetName(retrieved, "default", "test-reg")
+		Eventually(func() bool {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
+				return false
+			}
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Validated")
+			return r != nil && r["status"] == "False"
+
+		}, timeout, interval).Should(BeTrue())
+
+		// check status
+		status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
+		Expect(ok).To(BeTrue())
+		conds, ok := status["conditions"].([]any)
+		Expect(ok).To(BeTrue())
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
+		Expect(cond["status"]).To(Equal("False"))
+
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("False"))
+		Expect(cond["reason"]).To(Equal("StandardNotSupported"))
 	})
 
 	It("should reject a registration with an empty mobile identity", func() {
@@ -136,8 +264,12 @@ spec:
 			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
 				return false
 			}
-			_, ok := retrieved.UnstructuredContent()["status"]
-			return ok
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] == "False"
 
 		}, timeout, interval).Should(BeTrue())
 
@@ -146,10 +278,21 @@ spec:
 		Expect(ok).To(BeTrue())
 		conds, ok := status["conditions"].([]any)
 		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
+		Expect(conds).NotTo(BeEmpty())
 
-		cond := conds[0].(map[string]any)
-		Expect(cond["type"]).To(Equal("Registered"))
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
+		Expect(cond["status"]).To(Equal("False"))
+
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "Authenticated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Authenticated"))
 		Expect(cond["status"]).To(Equal("False"))
 		Expect(cond["reason"]).To(Equal("MobileIdentityNotProvided"))
 	})
@@ -193,8 +336,12 @@ spec:
 			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
 				return false
 			}
-			_, ok := retrieved.UnstructuredContent()["status"]
-			return ok
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] == "False"
 
 		}, timeout, interval).Should(BeTrue())
 
@@ -204,14 +351,26 @@ spec:
 
 		conds, ok := status["conditions"].([]any)
 		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
-		cond := conds[0].(map[string]any)
-		Expect(cond["type"]).To(Equal("Registered"))
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
+		Expect(cond["status"]).To(Equal("False"))
+
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "Authenticated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Authenticated"))
 		Expect(cond["status"]).To(Equal("False"))
 		Expect(cond["reason"]).To(Equal("EncyptionNotSupported"))
 	})
 
-	It("should reject a registration with an unsupported standard", func() {
+	It("should reject an unknown user", func() {
 		yamlData := `
 apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
@@ -225,18 +384,12 @@ spec:
     keySetIdentifier: noKeyAvailable
   mobileIdentity:
     type: SUCI
-    value: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
+    value: "dummy"
   ueSecurityCapability:
     encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
     integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
   ueStatus:
-    s1Mode: true
-    n1Mode: false
-  requestedNSSAI:
-    - sliceType: eMBB
-      sliceDifferentiator: "000001"
-    - sliceType: URLLC
-      sliceDifferentiator: "000002"`
+    n1Mode: true`
 		reg := object.New()
 		err := yaml.Unmarshal([]byte(yamlData), &reg)
 		Expect(err).NotTo(HaveOccurred())
@@ -251,9 +404,12 @@ spec:
 			if c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil {
 				return false
 			}
-			_, ok := retrieved.UnstructuredContent()["status"]
-			return ok
-
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Authenticated")
+			return r != nil && r["status"] == "False"
 		}, timeout, interval).Should(BeTrue())
 
 		// check status
@@ -262,10 +418,22 @@ spec:
 
 		conds, ok := status["conditions"].([]any)
 		Expect(ok).To(BeTrue())
-		Expect(conds).To(HaveLen(1))
-		cond := conds[0].(map[string]any)
-		Expect(cond["type"]).To(Equal("Registered"))
+		Expect(conds).NotTo(BeEmpty())
+
+		cond := findCondition(conds, "Ready")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Ready"))
 		Expect(cond["status"]).To(Equal("False"))
-		Expect(cond["reason"]).To(Equal("StandardNotSupported"))
+
+		cond = findCondition(conds, "Validated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Validated"))
+		Expect(cond["status"]).To(Equal("True"))
+
+		cond = findCondition(conds, "Authenticated")
+		Expect(cond).NotTo(BeNil())
+		Expect(cond["type"]).To(Equal("Authenticated"))
+		Expect(cond["status"]).To(Equal("False"))
+		Expect(cond["reason"]).To(Equal("SupiNotFound"))
 	})
 })

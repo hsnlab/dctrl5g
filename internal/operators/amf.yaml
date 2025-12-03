@@ -1,4 +1,11 @@
+# state: Rejected | Initialized | Validated | SecurityEstablished | IdentityPending | Authenticated | IdentityResolved | SibscriptionInfoPending | Ready
+# status: Authenticated, SubscriptionInfoRetrieved, NetworkSliceSelected, Ready
 controllers:
+  ##############################
+  #
+  # TABLE INIT
+  #
+  ##############################
   - name: initial-supi-to-guti-table
     sources:
       - kind: InitSupiToGutiTable
@@ -13,101 +20,148 @@ controllers:
     target:
       kind: SupiToGutiTable
 
+  ##############################
+  #
+  # Registration controllers
+  #
+  ##############################
   - name: register-input
     sources:
       - kind: Registration
         predicate: GenerationChanged
     pipeline:
       - "@project":
-          metadata:
-            name: $.metadata.name
-            namespace: $.metadata.namespace
+          metadata: $.metadata
           spec: $.spec
           status:
             conditions:
+              validated: { status: Unknown, message: Pending, reason: Pending }
+              authenticated: { status: Unknown, message: Pending, reason: Pending }
+              subscriptionInfoRetrieved: { status: Unknown, message: Pending, reason: Pending }
+              networkSliceSelected: { status: Unknown, message: Pending, reason: Pending }
+              ready: { status: Unknown, message: Pending, reason: Pending }
+      - "@project":
+          - "$.": $.
+          - "@cond":
+              - "@eq": ["$.spec.registrationType", "initial"]
+              - $.metadata.labels.state: Initialized
+              - $.metadata.labels.state: Rejected
+                $.status.conditions.validated:
+                  status: "False"
+                  reason: InvalidRegistrationType
+                  message: Only initialization is supported during Registration
+    target:
+      kind: RegState
+
+  - name: register-validate
+    sources:
+      - kind: RegState
+        labelSelector:
+          matchLabels:
+            state: Initialized
+    pipeline:
+      - "@project":
+          - "$.": $.
+          - "@cond":
+              - "@eq": [$.spec.ueStatus.n1Mode, true]
+              - metadata:
+                  labels:
+                    state: Validated
+                status:
+                  conditions:
+                    validated:
+                      status: "True"
+                      reason: Validated
+                      message: 5G signaling established
+              - metadata:
+                  labels:
+                    state: Rejected
+                status:
+                  conditions:
+                    validated:
+                      status: "False"
+                      reason: StandardNotSupported
+                      message: Only 5G signaling is supported
+    target:
+      kind: RegState
+      type: Patcher
+
+  - name: register-auth
+    sources:
+      - kind: RegState
+        labelSelector:
+          matchLabels:
+            state: Validated
+    pipeline:
+      - "@project":
+          - "$.": $.
+          - "@cond":
+              - "@or":
+                  - "@not": { "@eq": [$.spec.mobileIdentity.type, SUCI] }
+                  - "@isnil": $.spec.mobileIdentity.value
+              - $.metadata.labels.state: Rejected
+                "$.status.conditions.authenticated":
+                  status: "False"
+                  reason: MobileIdentityNotProvided
+                  message: Mobile identity is not provided
               - "@cond":
                   - "@or":
                       - "@not": {"@in": [5G-EA2, $.spec.ueSecurityCapability.encryptionAlgorithms]}
                       - "@not": {"@in": [5G-IA2, $.spec.ueSecurityCapability.integrityAlgorithms]}
-                  - type: Registered
-                    lastTransitionTime: "@now"
-                    status: "False"
-                    reason: EncyptionNotSupported
-                    message: Encryption or integrity algorithm not supported
-                  - "@cond":
-                      - "@not": { "@eq": [$.spec.ueStatus.n1Mode, true] }
-                      - type: Registered
-                        lastTransitionTime: "@now"
-                        status: "False"
-                        reason: StandardNotSupported
-                        message: Only 5G signaling is supported
-                      - "@cond":
-                          - "@or":
-                              - "@not": { "@eq": [$.spec.mobileIdentity.type, SUCI] }
-                              - "@isnil": $.spec.mobileIdentity.value
-                          - type: Registered
-                            lastTransitionTime: "@now"
-                            status: "False"
-                            reason: MobileIdentityNotProvided
-                            message: Mobile identity is not provided
-                          - type: Registered
-                            lastTransitionTime: "@now"
-                            status: "Pending"
-      - "@project":
-          - "$.": $.
-          - metadata:
-              labels:
-                "@cond":
-                  - "@eq": [ "$.status.conditions[?(@.type == 'Registered')].status", "Pending" ]
-                  - state: SupiRequestPending  # initial validation done
-                  - state: ValidationFailed
+                  - "$.metadata.labels.state": Rejected
+                    "$.status.conditions.authenticated":
+                      status: "False"
+                      reason: EncyptionNotSupported
+                      message: Encryption or integrity algorithm not supported
+                  - "$.metadata.labels.state": SecurityEstablished
     target:
       kind: RegState
+      type: Patcher
 
-  - name: register-supi-mapping-req
+  - name: register-identity-req
     sources:
       - kind: RegState
         labelSelector:
           matchLabels:
-            state: SupiRequestPending
+            state: SecurityEstablished
     pipeline:
       - "@project":
-          metadata: $.metadata
+          metadata:
+            name: $.metadata.name
+            namespace: $.metadata.namespace
           spec:
             suci: $.spec.mobileIdentity.value
+            registration: $.
     target:
       apiGroup: ausf.view.dcontroller.io
-      kind: SuciToSupiMapping
+      kind: MobileIdentity
 
-  - name: register-supi-mapping-handler
+  - name: register-identity-handler
     sources:
-      - kind: RegState
+      - apiGroup: ausf.view.dcontroller.io
+        kind: MobileIdentity
         labelSelector:
           matchLabels:
-            state: SupiRequestPending
-      - apiGroup: ausf.view.dcontroller.io
-        kind: SuciToSupiMapping
+            state: Ready
     pipeline:
-      - "@join":
-          "@and":
-            - "@eq": [$.SuciToSupiMapping.metadata.name, $.RegState.metadata.name]
-            - "@eq": [$.SuciToSupiMapping.metadata.namespace, $.RegState.metadata.namespace]
-      - "@select":
-          "@has": $.SuciToSupiMapping.status
       - "@project":
-          - metadata: "$.RegState.metadata"
+          - "$.": $.spec.registration
           - "@cond":
-              - "@eq": [ "$.SuciToSupiMapping.status.conditions[?(@.type == 'Ready')].status", "True" ]
-              -
-                metadata:
-                  labels:
-                    state: GutiRequestPending  # requesting GUTI
-                spec:
-                  supi: $.SuciToSupiMapping.status.supi
-              -
-                metadata:
-                  labels:
-                    state: SupiNotFound
+              - "@eq": [ "$.status.conditions[?(@.type == 'Ready')].status", "True" ]
+              - "$.metadata.labels.state": IdentityPending  # requesting GUTI
+                "$.spec.supi": $.status.supi
+                "$.status.conditions.authenticated":
+                  status: "True"
+                  reason: Authenticated
+                  message: UE successfully authenticated
+              - "$.metadata.labels.state": Rejected
+                "$.status.conditions.authenticated":
+                  status: "False"
+                  reason: SupiNotFound
+                  message:
+                    "@concat":
+                      - "Failed to establish mobile identify: "
+                      - "$.status.conditions[?(@.type == 'Ready')].message"
     target:
       kind: RegState
       type: Patcher
@@ -117,22 +171,25 @@ controllers:
       - kind: RegState
         labelSelector:
           matchLabels:
-            state: GutiRequestPending
+            state: IdentityPending
       - kind: SupiToGutiTable
     pipeline:
       - "@join": true
       - "@project":
-          - metadata: $.RegState.metadata
+          - "$.": $.RegState
           - "@cond":
               - "@has": "$.SupiToGutiTable.spec[?(@.supi == $.RegState.spec.supi)]"
-              - metadata:
-                  labels:
-                    state: ConfigRequestPending
-                spec:
-                  guti: "$.SupiToGutiTable.spec[?(@.supi == $.RegState.spec.supi)].guti"
-              - metadata:
-                  labels:
-                    state: GutiNotFound
+              - "$.metadata.labels.state": IdentityResolved
+                "$.spec.guti": "$.SupiToGutiTable.spec[?(@.supi == $.RegState.spec.supi)].guti"
+                "$.status.conditions.authenticated":
+                  status: "True"
+                  reason: AuthenticationSuccess
+                  message: "UE successfully authenticated"
+              - $.metadata.labels.state: Rejected
+                "$.status.conditions.authenticated":
+                  status: "False"
+                  reason: MobileIdentityFailed
+                  message: "Failed to establish mobile identify: Could not fing GUTI"
     target:
       kind: RegState
       type: Patcher
@@ -142,44 +199,44 @@ controllers:
       - kind: RegState
         labelSelector:
           matchLabels:
-            state: ConfigRequestPending
+            state: IdentityResolved
     pipeline:
       - "@project":
           metadata:
             name: $.spec.guti
             namespace: $.metadata.namespace
+          spec:
+            registration: $.
     target:
       apiGroup: udm.view.dcontroller.io
       kind: Config
 
   - name: register-config-handler
     sources:
-      - kind: RegState
-        labelSelector:
-          matchLabels:
-            state: ConfigRequestPending
       - apiGroup: udm.view.dcontroller.io
         kind: Config
         labelSelector:
           matchLabels:
-            state: ConfigAvailable
+            state: Ready
     pipeline:
-      - "@join":
-          "@and":
-            - "@eq": [ $.RegState.spec.guti, $.Config.metadata.name ]
-            - "@eq": [ $.RegState.metadata.namespace, $.Config.metadata.namespace ]
       - "@project":
-          - metadata: $.RegState.metadata
+          - "$.": $.spec.registration # recover the regstate
           - "@cond":
-              - "@eq": [ "$.Config.status.conditions[?(@.type == 'Ready')].status", "True" ]
-              - metadata:
-                  labels:
-                    state: ConfigAvailable
-                status:
-                  config: $.Config.status.config
-              - metadata:
-                  labels:
-                    state: ConfigNotFound
+              - "@eq": [ "$.status.conditions[?(@.type == 'Ready')].status", "True" ]
+              - "$.metadata.labels.state": Ready
+                "$.status.config": $.status.config
+                "$.status.conditions.subscriptionInfoRetrieved":
+                    status: "True"
+                    reason: ConfigReady
+                    message: UE config successfully loaded
+              - "$.metadata.labels.state": Rejected
+                "$.status.conditions.subscriptionInfoRetrieved":
+                    status: "False"
+                    reason: ConfigNotFound
+                    message:
+                      "@concat":
+                        - "Failed to load subscription info: "
+                        - "$.status.conditions[?(@.type == 'Ready')].status.message"
     target:
       kind: RegState
       type: Patcher
@@ -187,10 +244,13 @@ controllers:
   - name: register-output
     sources:
       - kind: Registration
+        predicate: GenerationChanged
       - kind: RegState
         labelSelector:
           matchExpressions:
-            - { key: state, operator: In, values: [ValidationFailed, ConfigAvailable, GutiAvailable, SupiNotFound, GutiNotFound, ConfigNotFound] }
+            - key: state
+              operator: In
+              values: ["Ready", "Rejected"]
     pipeline:
       - "@join":
           "@and":
@@ -204,30 +264,34 @@ controllers:
             annotations: $.Registration.metadata.annotations
           spec: $.RegState.spec
           status:
-            "@cond":
-              - "@eq": [$.RegState.metadata.labels.state, ConfigAvailable]
-              - conditions:
-                  - type: Registered
-                    lastTransitionTime: "@now"
-                    status: "True"
-                    reason: Registered
-                    message: Registration successful
-                guti: $.RegState.spec.guti
-                config: $.RegState.status.config
+            conditions:
               - "@cond":
-                  - "@eq": [$.RegState.metadata.labels.state, ValidationFailed]
-                  - conditions:
-                      - type: Registered
-                        lastTransitionTime: "@now"
-                        status: "False"
-                        reason: $.RegState.status.conditions[?(@.type == "Registered")].reason
-                        message: $.RegState.status.conditions[?(@.type == "Registered")].message
-                  - conditions:
-                      - type: Registered
-                        lastTransitionTime: "@now"
-                        status: "False"
-                        reason: $.RegState.metadata.labels.state
-                        message:
-                          "@concat": ["Registration failed with status: ", $.RegState.metadata.labels.state]
+                  - "@eq": ["$.RegState.metadata.labels.state", Ready]
+                  - type: Ready
+                    status: "True"
+                    reason: RegistrationSuccessful
+                    message: Registration successful
+                  - type: Ready
+                    status: "False"
+                    reason: RegistrationFailed
+                    message: Registration failed
+                    # message:
+                    #   "@concat": ["Registration failed with status: ", $.RegState.metadata.labels.state]
+              - type: Validated
+                status: $.RegState.status.conditions.validated.status
+                reason: $.RegState.status.conditions.validated.reason
+                message: $.RegState.status.conditions.validated.message
+              - type: Authenticated
+                status: $.RegState.status.conditions.authenticated.status
+                reason: $.RegState.status.conditions.authenticated.reason
+                message: $.RegState.status.conditions.authenticated.message
+              - type: SubscriptionInfoRetrieved
+                status: $.RegState.status.conditions.subscriptionInfoRetrieved.status
+                reason: $.RegState.status.conditions.subscriptionInfoRetrieved.reason
+                message: $.RegState.status.conditions.subscriptionInfoRetrieved.message
+              - type: NetworkSliceSelected
+                status: "True"
+                reason: NetworkSliceFound
+                message: Network slice selected
     target:
       kind: Registration
