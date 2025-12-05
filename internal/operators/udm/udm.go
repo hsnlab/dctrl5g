@@ -194,7 +194,11 @@ func (r *udmController) Reconcile(ctx context.Context, req reconciler.Request) (
 func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error) {
 	guti := obj.GetName()
 	namespacesList := []string{guti}
-	rulesList := []rbacv1.PolicyRule{}
+	rulesList := []rbacv1.PolicyRule{{
+		Verbs:     []string{"create", "get", "list", "watch", "delete"},
+		APIGroups: []string{"amf.view.dcontroller.io"},
+		Resources: []string{"registration", "session"},
+	}}
 	token, err := r.generator.GenerateToken(guti, namespacesList, rulesList, 168*time.Hour)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
