@@ -39,7 +39,7 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 3. Create initial user config, which will only allow the user to register:
    ```bash
    dctl generate-config --user=<username> --namespaces=<username> --insecure \
-    --rules='[{"verbs":["create","get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
+    --rules='[{"verbs":["create","get","list","watch","delete"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
     > ./user-1-initial.config
    ```
 
@@ -82,10 +82,10 @@ Init the operators using the production mode and assume username is `<user-1>`.
    kubectl apply -f workflows/registration/registration-user-1.yaml
    ```
 
-3. Check registration status: you should get a valid `Ready` status:
+3. Check registration status: you should get a valid `Ready` status (plus lots of other useful statuses):
 
    ```bash
-   kubectl -n user-1 get registration user-1 -o jsonpath='{.status.conditions[0]}'|jq .
+   kubectl -n user-1 get registration user-1 -o jsonpath='{.status.conditions}'|jq .
    {
      "lastTransitionTime": "2025-11-25T13:49:51Z",
      "message": "Registration successful",
