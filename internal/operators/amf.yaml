@@ -227,6 +227,8 @@ controllers:
             annotations: $.Registration.metadata.annotations
           spec: $.RegState.spec
           status:
+            config: $.RegState.status.config
+            guti: $.RegState.status.guti
             conditions:
               - "@cond":
                   - "@eq": ["$.RegState.metadata.labels.state", Ready]
