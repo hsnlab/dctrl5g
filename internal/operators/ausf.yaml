@@ -63,16 +63,17 @@ controllers:
               state: Ready
           spec: $.MobileIdentity.spec
           status:
-            suci: "$.MobileIdentity.spec.suci"
-            supi: "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)].supi"
-            conditions:
-              - "@cond":
-                  - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)]"
+            "@cond":
+              - "@has": "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)]"
+              - suci: "$.MobileIdentity.spec.suci"
+                supi: "$.SuciToSupiTable.spec[?(@.suci == $.MobileIdentity.spec.suci)].supi"
+                conditions:
                   - type: Ready
                     status: "True"
                     reason: Ready
                     message: Mobile identity found
                     lastTransitionTime: "@now"
+              - conditions:
                   - type: Ready
                     status: "False"
                     reason: MobileIdentityNotFound
