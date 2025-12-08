@@ -10,13 +10,11 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
-	runtimeConfig "sigs.k8s.io/controller-runtime/pkg/config"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
+	"github.com/l7mp/dcontroller/pkg/cache"
 	"github.com/l7mp/dcontroller/pkg/controller"
-	"github.com/l7mp/dcontroller/pkg/manager"
 	"github.com/l7mp/dcontroller/pkg/operator"
 
 	"github.com/hsnlab/dctrl5g/internal/operators/udm"
@@ -37,7 +35,7 @@ type Options struct {
 }
 
 type Dctrl struct {
-	mgr         manager.Manager
+	api         *cache.API
 	ops         map[string]*operator.Operator
 	apiServer   *apiserver.APIServer
 	errorChan   chan error
@@ -60,23 +58,16 @@ func New(opts Options) (*Dctrl, error) {
 		port = 18443
 	}
 
-	// Step 1: Create a manager with an empty REST config.
-	off := true
-	mgr, err := manager.New(nil, manager.Options{
-		LeaderElection:         false,
-		HealthProbeBindAddress: "0",
-		// Disable global controller name uniquness test
-		Controller: runtimeConfig.Controller{
-			SkipNameValidation: &off,
-		},
-		Metrics: metricsserver.Options{
-			BindAddress: "0",
-		},
-		Logger: logger,
+	// Step 1: Create a shared view cache.
+	api, err := cache.NewAPI(nil, cache.APIOptions{
+		CacheOptions: cache.CacheOptions{Logger: logger},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create the shared view cache: %w", err)
+	}
 
 	// Step 2: Create the API server
-	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, mgr.GetClient(), opts.HTTPMode, opts.Insecure, logger)
+	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, api.Client, opts.HTTPMode, opts.Insecure, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the config for the embedded API server: %w", err)
 	}
@@ -113,7 +104,8 @@ func New(opts Options) (*Dctrl, error) {
 	errorChan := make(chan error, 64)
 	ops := map[string]*operator.Operator{}
 	for _, opSpec := range opts.OpSpecs {
-		op, err := operator.NewFromFile(opSpec.Name, mgr, opSpec.File, operator.Options{
+		op, err := operator.NewFromFile(opSpec.Name, nil, opSpec.File, operator.Options{
+			Cache:        api.Cache,
 			APIServer:    apiServer,
 			ErrorChannel: errorChan,
 			Logger:       logger,
@@ -126,7 +118,8 @@ func New(opts Options) (*Dctrl, error) {
 
 	// 4. Load the UDM operator. The constructor returns an actual operator (calls
 	// AddNativeController internally).
-	udmOp, err := udm.New(mgr, apiServer, udm.Options{
+	udmOp, err := udm.New(apiServer, udm.Options{
+		API:      api,
 		HTTPMode: opts.HTTPMode,
 		Insecure: opts.Insecure,
 		KeyFile:  opts.KeyFile,
@@ -137,8 +130,10 @@ func New(opts Options) (*Dctrl, error) {
 	}
 	ops["udm"] = udmOp.Operator
 
-	return &Dctrl{mgr: mgr, ops: ops, apiServer: apiServer, errorChan: errorChan, log: log, logger: logger}, nil
+	return &Dctrl{api: api, ops: ops, apiServer: apiServer, errorChan: errorChan, log: log, logger: logger}, nil
 }
+
+func (d *Dctrl) GetAPI() *cache.API { return d.api }
 
 func (d *Dctrl) Start(ctx context.Context) error {
 	defer close(d.errorChan)
@@ -159,7 +154,7 @@ func (d *Dctrl) Start(ctx context.Context) error {
 					d.log.Error(err, "controller error", "operator", operr.Operator,
 						"controller", operr.Controller)
 				} else {
-					d.log.Error(err, "unknown error")
+					d.log.Error(err, "error")
 				}
 
 			case <-ctx.Done():
@@ -168,8 +163,18 @@ func (d *Dctrl) Start(ctx context.Context) error {
 		}
 	}()
 
-	d.log.V(1).Info("starting the runtime manager")
-	return d.mgr.Start(ctx)
+	for n, o := range d.ops {
+		d.log.V(1).Info("starting the operator", "name", n)
+		go func() {
+			if err := o.Start(ctx); err != nil {
+				d.log.Error(err, "operator error", "name", n)
+			}
+		}()
+	}
+
+	d.log.V(1).Info("starting the shared storage")
+	return d.api.Cache.Start(ctx)
+
 }
 
 func (d *Dctrl) GetErrorChannel() chan error                { return d.errorChan }

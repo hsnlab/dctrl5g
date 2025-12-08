@@ -36,11 +36,19 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
    go run main.go -zap-log-level 4
    ```
 
-3. Create initial user config, which will only allow the user to register:
+3. Create **initial user config**, which will only allow the user to register:
    ```bash
    dctl generate-config --user=<username> --namespaces=<username> --insecure \
     --rules='[{"verbs":["create","get","list","watch","delete"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
     > ./user-1-initial.config
+   ```
+
+4. To interact with the API server with **full admin access**, load the config generated as follows:
+
+   ```bash
+   dctl generate-config --user=<admin> --insecure \
+    --rules='[{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}]' \
+    > ./admin.config
    ```
 
 ## Workflows
@@ -49,12 +57,9 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 Init the operators using the production mode and assume username is `<user-1>`. 
 
-1. Create the initial config for the user:
+1. Load the initial config of the user:
 
    ```bash
-   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
-    --rules='[{"verbs":["create","get","list","watch"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
-    > ./user-1-initial.config
    export KUBECONFIG=./user-1-initial.config
    ```
 
@@ -109,6 +114,12 @@ Init the operators using the production mode and assume username is `<user-1>`.
    ...
    ```
 
+6. Optionally, clean up the registration:
+
+   ```bash
+   kubectl delete -f workflows/registration/registration-user-1.yaml
+   ```
+   
 ## License
 
 MIT License

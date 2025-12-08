@@ -12,7 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	"github.com/l7mp/dcontroller/pkg/composite"
+	"github.com/l7mp/dcontroller/pkg/cache"
 	"github.com/l7mp/dcontroller/pkg/object"
 	"github.com/l7mp/dcontroller/pkg/operator"
 
@@ -37,7 +37,9 @@ var _ = Describe("AUSF Operator", func() {
 		Expect(err).NotTo(HaveOccurred())
 		op = d.GetOperator("ausf")
 		Expect(op).NotTo(BeNil())
-		c = op.GetManager().GetClient().(client.WithWatch)
+		var ok bool
+		c, ok = op.GetManager().GetClient().(client.WithWatch)
+		Expect(ok).To(BeTrue())
 		Expect(c).NotTo(BeNil())
 	})
 
@@ -46,7 +48,7 @@ var _ = Describe("AUSF Operator", func() {
 	})
 
 	It("should create the SUCI-to-SUPI table", func() {
-		list := composite.NewViewObjectList("ausf", "SuciToSupiTable")
+		list := cache.NewViewObjectList("ausf", "SuciToSupiTable")
 		Eventually(func() bool {
 			err := c.List(ctx, list)
 			return err == nil && len(list.Items) == 1

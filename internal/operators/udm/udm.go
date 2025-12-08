@@ -18,26 +18,31 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	runtimeMgr "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	opv1a1 "github.com/l7mp/dcontroller/pkg/api/operator/v1alpha1"
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
+	"github.com/l7mp/dcontroller/pkg/cache"
 	dcontroller "github.com/l7mp/dcontroller/pkg/controller"
+	"github.com/l7mp/dcontroller/pkg/manager"
 	"github.com/l7mp/dcontroller/pkg/object"
 	"github.com/l7mp/dcontroller/pkg/operator"
 	"github.com/l7mp/dcontroller/pkg/predicate"
 	"github.com/l7mp/dcontroller/pkg/reconciler"
 )
 
-const (
-	OperatorName = "udm"
-	// RBACRules = `[{"verbs":["*"],"apiGroups":["*"],"resources":[]}]`
-)
+const OperatorName = "udm"
+
+var RBACRules = []rbacv1.PolicyRule{{
+	Verbs:     []string{"create", "get", "list", "watch", "delete"},
+	APIGroups: []string{"amf.view.dcontroller.io"},
+	Resources: []string{"registration", "session"},
+}}
 
 type Options struct {
+	API                *cache.API
 	HTTPMode, Insecure bool
 	KeyFile            string
 	Logger             logr.Logger
@@ -48,19 +53,23 @@ type UDM struct {
 	c *udmController
 }
 
-func New(mgr runtimeMgr.Manager, apiServer *apiserver.APIServer, opts Options) (*UDM, error) {
+func New(apiServer *apiserver.APIServer, opts Options) (*UDM, error) {
 	log := opts.Logger.WithName("udm")
 
 	// Load the operator from file
 	errorChan := make(chan error, 16)
-	op := operator.New(OperatorName, mgr, operator.Options{
+	op, err := operator.New(OperatorName, nil, operator.Options{
+		Cache:        opts.API.Cache,
 		APIServer:    apiServer,
 		ErrorChannel: errorChan,
 		Logger:       opts.Logger,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create manager for operator UDM: %w", err)
+	}
 
 	// Create the udm controller
-	c, err := NewUdmController(mgr, apiServer.GetServerAddress(), opts)
+	c, err := NewUdmController(op.GetManager(), apiServer.GetServerAddress(), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +95,7 @@ type udmController struct {
 	log           logr.Logger
 }
 
-func NewUdmController(mgr runtimeMgr.Manager, serverAddress string, opts Options) (*udmController, error) {
+func NewUdmController(mgr manager.Manager, serverAddress string, opts Options) (*udmController, error) {
 	privateKey, err := auth.LoadPrivateKey(opts.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load private key %q: %w", opts.KeyFile, err)
@@ -94,7 +103,7 @@ func NewUdmController(mgr runtimeMgr.Manager, serverAddress string, opts Options
 	generator := auth.NewTokenGenerator(privateKey)
 
 	r := &udmController{
-		Client:        mgr.GetClient(),
+		Client:        opts.API.Client,
 		opts:          opts,
 		generator:     generator,
 		serverAddress: serverAddress,
@@ -142,37 +151,6 @@ func NewUdmController(mgr runtimeMgr.Manager, serverAddress string, opts Options
 func (r *udmController) Reconcile(ctx context.Context, req reconciler.Request) (reconcile.Result, error) {
 	r.log.Info("Reconciling", "request", req.String())
 
-	// switch req.EventType {
-	// case object.Added, object.Updated, object.Upserted:
-	// 	obj := object.NewViewObject(OperatorName, req.GVK.Kind)
-	// 	if err := r.Get(ctx, types.NamespacedName{Name: req.Name, Namespace: req.Namespace}, obj); err != nil {
-	// 		r.log.Error(err, "failed to get added/updated object", "delta-type", req.EventType)
-	// 		return reconcile.Result{}, err
-	// 	}
-
-	// 	name := obj.GetName()
-	// 	namespace := obj.GetNamespace()
-
-	// 	r.log.Info("Add/update Config request object", "name", name, "namespace", namespace)
-
-	// 	config, err := r.getKubeConfig(obj)
-	// 	if err != nil {
-	// 		r.setStatus(ctx, obj, "False", "ConfigUnavailable", "Failed to generate config", nil)
-	// 		return reconcile.Result{},
-	// 			fmt.Errorf("failed to generate config: %w", err)
-	// 	}
-
-	// 	r.setStatus(ctx, obj, "True", "Ready", "Succesfully generated config", config)
-
-	// case object.Deleted:
-	// 	r.log.Info("Delete Config object", "name", req.Name, "namespace", req.Namespace)
-
-	// 	// do nothing
-
-	// default:
-	// 	r.log.Info("Unhandled event", "name", req.Name, "namespace", req.Namespace, "type", req.EventType)
-	// }
-
 	obj := req.Object
 	name := obj.GetName()
 	namespace := obj.GetNamespace()
@@ -194,11 +172,7 @@ func (r *udmController) Reconcile(ctx context.Context, req reconciler.Request) (
 func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error) {
 	guti := obj.GetName()
 	namespacesList := []string{guti}
-	rulesList := []rbacv1.PolicyRule{{
-		Verbs:     []string{"create", "get", "list", "watch", "delete"},
-		APIGroups: []string{"amf.view.dcontroller.io"},
-		Resources: []string{"registration", "session"},
-	}}
+	rulesList := RBACRules
 	token, err := r.generator.GenerateToken(guti, namespacesList, rulesList, 168*time.Hour)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)

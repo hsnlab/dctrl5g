@@ -20,7 +20,7 @@ import (
 
 	"github.com/l7mp/dcontroller/pkg/apiserver"
 	"github.com/l7mp/dcontroller/pkg/auth"
-	"github.com/l7mp/dcontroller/pkg/manager"
+	"github.com/l7mp/dcontroller/pkg/cache"
 	"github.com/l7mp/dcontroller/pkg/object"
 )
 
@@ -59,6 +59,11 @@ var _ = Describe("UDM Operator", func() {
 		ctrl.SetLogger(logger.WithName("dctrl5g-test"))
 		ctx, cancel = context.WithCancel(context.Background())
 
+		api, err := cache.NewAPI(nil, cache.APIOptions{
+			CacheOptions: cache.CacheOptions{Logger: logger},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
 		// must load op manually: testsuite.StartOps would create a dctrl object that would import us
 		cert, key, err := auth.GenerateSelfSignedCertWithSANs([]string{"localhost"})
 		Expect(err).NotTo(HaveOccurred())
@@ -66,14 +71,14 @@ var _ = Describe("UDM Operator", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		port := randomPort()
-		mgr, err := manager.NewHeadless(manager.Options{Logger: logger})
-		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, mgr.GetClient(), true, false, logger)
+		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, api.Client, true, false, logger)
 		Expect(err).NotTo(HaveOccurred())
 
 		apiServer, err := apiserver.NewAPIServer(apiServerConfig)
 		Expect(err).NotTo(HaveOccurred())
 
-		udm, err := New(mgr, apiServer, Options{
+		udm, err := New(apiServer, Options{
+			API:      api,
 			HTTPMode: true,
 			Insecure: true,
 			KeyFile:  keyFile,
@@ -95,11 +100,11 @@ var _ = Describe("UDM Operator", func() {
 
 		go func() {
 			defer GinkgoRecover()
-			err := mgr.Start(ctx)
+			err := udm.Start(ctx) // will start the view cache
 			Expect(err).NotTo(HaveOccurred())
 		}()
 
-		c = mgr.GetClient().(client.WithWatch)
+		c = api.Client.(client.WithWatch)
 		Expect(c).NotTo(BeNil())
 	})
 

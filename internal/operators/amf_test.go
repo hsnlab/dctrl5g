@@ -37,7 +37,9 @@ var _ = Describe("AMF Operator", func() {
 		Expect(err).NotTo(HaveOccurred())
 		op = d.GetOperator("amf")
 		Expect(op).NotTo(BeNil())
-		c = op.GetManager().GetClient().(client.WithWatch)
+		var ok bool
+		c, ok = d.GetAPI().Client.(client.WithWatch)
+		Expect(ok).To(BeTrue())
 		Expect(c).NotTo(BeNil())
 	})
 
