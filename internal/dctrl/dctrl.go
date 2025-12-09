@@ -35,7 +35,7 @@ type Options struct {
 }
 
 type Dctrl struct {
-	api         *cache.API
+	sharedCache *cache.ViewCache
 	ops         map[string]*operator.Operator
 	apiServer   *apiserver.APIServer
 	errorChan   chan error
@@ -59,15 +59,11 @@ func New(opts Options) (*Dctrl, error) {
 	}
 
 	// Step 1: Create a shared view cache.
-	api, err := cache.NewAPI(nil, cache.APIOptions{
-		CacheOptions: cache.CacheOptions{Logger: logger},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create the shared view cache: %w", err)
-	}
+	sharedCache := cache.NewViewCache(cache.CacheOptions{Logger: logger})
 
 	// Step 2: Create the API server
-	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, api.Client, opts.HTTPMode, opts.Insecure, logger)
+	apiServerConfig, err := apiserver.NewDefaultConfig(addr, port, sharedCache.GetClient(),
+		opts.HTTPMode, opts.Insecure, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the config for the embedded API server: %w", err)
 	}
@@ -105,7 +101,7 @@ func New(opts Options) (*Dctrl, error) {
 	ops := map[string]*operator.Operator{}
 	for _, opSpec := range opts.OpSpecs {
 		op, err := operator.NewFromFile(opSpec.Name, nil, opSpec.File, operator.Options{
-			Cache:        api.Cache,
+			Cache:        sharedCache,
 			APIServer:    apiServer,
 			ErrorChannel: errorChan,
 			Logger:       logger,
@@ -119,7 +115,7 @@ func New(opts Options) (*Dctrl, error) {
 	// 4. Load the UDM operator. The constructor returns an actual operator (calls
 	// AddNativeController internally).
 	udmOp, err := udm.New(apiServer, udm.Options{
-		API:      api,
+		Cache:    sharedCache,
 		HTTPMode: opts.HTTPMode,
 		Insecure: opts.Insecure,
 		KeyFile:  opts.KeyFile,
@@ -130,10 +126,17 @@ func New(opts Options) (*Dctrl, error) {
 	}
 	ops["udm"] = udmOp.Operator
 
-	return &Dctrl{api: api, ops: ops, apiServer: apiServer, errorChan: errorChan, log: log, logger: logger}, nil
+	return &Dctrl{
+		sharedCache: sharedCache,
+		ops:         ops,
+		apiServer:   apiServer,
+		errorChan:   errorChan,
+		log:         log,
+		logger:      logger,
+	}, nil
 }
 
-func (d *Dctrl) GetAPI() *cache.API { return d.api }
+func (d *Dctrl) GetCache() *cache.ViewCache { return d.sharedCache }
 
 func (d *Dctrl) Start(ctx context.Context) error {
 	defer close(d.errorChan)
@@ -173,7 +176,7 @@ func (d *Dctrl) Start(ctx context.Context) error {
 	}
 
 	d.log.V(1).Info("starting the shared storage")
-	return d.api.Cache.Start(ctx)
+	return d.sharedCache.Start(ctx)
 
 }
 

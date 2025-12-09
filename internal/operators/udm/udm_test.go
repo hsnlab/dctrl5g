@@ -59,10 +59,7 @@ var _ = Describe("UDM Operator", func() {
 		ctrl.SetLogger(logger.WithName("dctrl5g-test"))
 		ctx, cancel = context.WithCancel(context.Background())
 
-		api, err := cache.NewAPI(nil, cache.APIOptions{
-			CacheOptions: cache.CacheOptions{Logger: logger},
-		})
-		Expect(err).NotTo(HaveOccurred())
+		sharedCache := cache.NewViewCache(cache.CacheOptions{Logger: logger})
 
 		// must load op manually: testsuite.StartOps would create a dctrl object that would import us
 		cert, key, err := auth.GenerateSelfSignedCertWithSANs([]string{"localhost"})
@@ -71,14 +68,15 @@ var _ = Describe("UDM Operator", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		port := randomPort()
-		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, api.Client, true, false, logger)
+		apiServerConfig, err := apiserver.NewDefaultConfig("localhost", port, sharedCache.GetClient(),
+			true, false, logger)
 		Expect(err).NotTo(HaveOccurred())
 
 		apiServer, err := apiserver.NewAPIServer(apiServerConfig)
 		Expect(err).NotTo(HaveOccurred())
 
 		udm, err := New(apiServer, Options{
-			API:      api,
+			Cache:    sharedCache,
 			HTTPMode: true,
 			Insecure: true,
 			KeyFile:  keyFile,
@@ -104,7 +102,7 @@ var _ = Describe("UDM Operator", func() {
 			Expect(err).NotTo(HaveOccurred())
 		}()
 
-		c = api.Client.(client.WithWatch)
+		c = sharedCache.GetClient()
 		Expect(c).NotTo(BeNil())
 	})
 

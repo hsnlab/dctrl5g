@@ -42,7 +42,7 @@ var RBACRules = []rbacv1.PolicyRule{{
 }}
 
 type Options struct {
-	API                *cache.API
+	Cache              cache.Cache
 	HTTPMode, Insecure bool
 	KeyFile            string
 	Logger             logr.Logger
@@ -59,7 +59,7 @@ func New(apiServer *apiserver.APIServer, opts Options) (*UDM, error) {
 	// Load the operator from file
 	errorChan := make(chan error, 16)
 	op, err := operator.New(OperatorName, nil, operator.Options{
-		Cache:        opts.API.Cache,
+		Cache:        opts.Cache,
 		APIServer:    apiServer,
 		ErrorChannel: errorChan,
 		Logger:       opts.Logger,
@@ -103,7 +103,7 @@ func NewUdmController(mgr manager.Manager, serverAddress string, opts Options) (
 	generator := auth.NewTokenGenerator(privateKey)
 
 	r := &udmController{
-		Client:        opts.API.Client,
+		Client:        opts.Cache.(*cache.ViewCache).GetClient(),
 		opts:          opts,
 		generator:     generator,
 		serverAddress: serverAddress,

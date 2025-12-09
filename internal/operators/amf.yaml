@@ -89,7 +89,11 @@ controllers:
         labelSelector:
           matchLabels:
             state: Initialized
+      - kind: Registration   # added so that Config gets deleted properly
     pipeline:
+      - "@join": true
+      - "@project":
+          "$.": $.RegState
       - "@project":
           metadata:
             name: $.metadata.name
