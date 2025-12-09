@@ -1065,7 +1065,7 @@ spec:
 	})
 })
 
-var template = `
+var regTemplate = `
 apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: Registration
 metadata:
@@ -1092,13 +1092,11 @@ spec:
     - sliceType: URLLC
       sliceDifferentiator: "000002"`
 
-type statusCond struct{ name, status string }
-
 func initReg(ctx context.Context, name, namespace, suci string, conds ...statusCond) object.Object {
 	GinkgoHelper()
 
 	// load reg 1
-	yamlData := fmt.Sprintf(template, name, namespace, suci)
+	yamlData := fmt.Sprintf(regTemplate, name, namespace, suci)
 	reg1 := object.New()
 	err := yaml.Unmarshal([]byte(yamlData), &reg1)
 	Expect(err).NotTo(HaveOccurred())

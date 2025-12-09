@@ -31,6 +31,9 @@ var (
 	c client.WithWatch
 )
 
+type statusCond struct{ name, status string }
+type labelCond struct{ name, value string }
+
 func TestManager(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "5G Operators")

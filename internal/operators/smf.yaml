@@ -21,26 +21,41 @@
 #    - sets Session status based on SessionContext status
 
 controllers:
-  # ##############################
-  # #
-  # # TABLE INIT
-  # #
-  # ##############################
-  # - name: init-supi-to-guti-table
-  #   sources:
-  #     - kind: InitSupiToGutiTable
-  #       type: OneShot
-  #   pipeline:
-  #     - "@project":
-  #         metadata:
-  #           name: supi-to-guti
-  #         spec:
-  #           - supi: "imsi-999010000000123"
-  #             guti: "guti-310-170-3F-152-2A-B7C8D9E0"
-  #           - supi: "imsi-999010000000124"
-  #             guti: "guti-310-170-3F-152-2A-B7C8D9E1"
-  #   target:
-  #     kind: SupiToGutiTable
+  ##############################
+  #
+  # TABLE INIT
+  #
+  ##############################
+  - name: init-active-session-table
+    sources:
+      - kind: InitActiveSessionTable
+        type: OneShot
+    pipeline:
+      - "@project":
+          metadata:
+            name: test-session
+            namespace: test-session
+            labels:
+              state: "Validated"
+          spec:
+            guti: "test-guti-000000000000000"
+            nssai: eMBB
+            sessionId: 0
+            pduSessionType: IPv4  
+            sscMode: SSC1 
+            networkConfiguration: 
+              requests:
+                - type: IPConfiguration
+                  addressFamily: IPv4  # Internet Protocol Control Protocol
+                - type: DNSServer
+                  addressFamily: IPv4
+            qos:
+              flows:
+                - name: best-effort-flow
+                  fiveQI: BestEffort
+              rules: [1,2]
+    target:
+      kind: SessionContext
 
   ##############################
   #
@@ -161,4 +176,29 @@ controllers:
             qos: $.status.qos
     target:
       apiGroup: upf.view.dcontroller.io
-      kind: Configuration
+      kind: Config
+
+  - name: active-session
+    sources:
+      - kind: SessionContext
+        labelSelector:
+          matchLabels:
+            state: Ready
+    pipeline:
+      - "@project":
+          type: SessionContext
+          metadata: $.metadata
+          spec:
+            name: $.metadata.name
+            namespace: $.metadata.namespace
+            guti: $.spec.guti
+      - "@gather":
+          - $.type
+          - $.spec
+      - "@project":
+          metadata:
+            name: active-sessions
+          spec: $.spec
+    target:
+      kind: ActiveSessionTable
+      
