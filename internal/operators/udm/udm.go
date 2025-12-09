@@ -79,6 +79,10 @@ func New(apiServer *apiserver.APIServer, opts Options) (*UDM, error) {
 	// Add native controller to the operator and export GVKs to the API server.
 	op.AddNativeController("config-ctrl", c.ctrl, c.gvks)
 
+	if err := op.RegisterGVKs(); err != nil {
+		return nil, err
+	}
+
 	return &UDM{Operator: op, c: c}, nil
 }
 

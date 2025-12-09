@@ -2,6 +2,7 @@ package operators
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -532,4 +533,136 @@ spec:
 		}, timeout, interval).Should(BeTrue())
 	})
 
+	It("should register 2 registrations", func() {
+		template := `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  registrationType: initial
+  nasKeySetIdentifier:
+    typeOfSecurityContext: native
+    keySetIdentifier: noKeyAvailable
+  mobileIdentity:
+    type: SUCI
+    value: %s
+  ueSecurityCapability:
+    encryptionAlgorithms: ["5G-EA0", "5G-EA1", "5G-EA2", "5G-EA3"]
+    integrityAlgorithms: ["5G-IA0", "5G-IA1", "5G-IA2", "5G-IA3"]
+  ueStatus:
+    n1Mode: true
+  requestedNSSAI:
+    - sliceType: eMBB
+      sliceDifferentiator: "000001"
+    - sliceType: URLLC
+      sliceDifferentiator: "000002"`
+		// load reg 1
+		yamlData := fmt.Sprintf(template, "user-1", "user-1", "suci-0-999-01-02-4f2a7b9c8d13e7a5c0")
+		reg1 := object.New()
+		err := yaml.Unmarshal([]byte(yamlData), &reg1)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = c.Create(ctx, reg1)
+		Expect(err).NotTo(HaveOccurred())
+
+		yamlData = fmt.Sprintf(template, "user-2", "user-2", "suci-0-999-01-02-4f2a7b9c8d13e7a5c1")
+		reg2 := object.New()
+		err = yaml.Unmarshal([]byte(yamlData), &reg2)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = c.Create(ctx, reg2)
+		Expect(err).NotTo(HaveOccurred())
+
+		// wait until we get 2 objects with readystatus
+		retrieved1 := object.NewViewObject("amf", "Registration")
+		object.SetName(retrieved1, "user-1", "user-1")
+		Eventually(func() bool {
+			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved1), retrieved1); err != nil {
+				return false
+			}
+			cs, ok, err := unstructured.NestedSlice(retrieved1.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] == "True"
+		}, timeout, interval).Should(BeTrue())
+
+		retrieved2 := object.NewViewObject("amf", "Registration")
+		object.SetName(retrieved2, "user-2", "user-2")
+		Eventually(func() bool {
+			if c.Get(ctx, client.ObjectKeyFromObject(retrieved2), retrieved2) != nil {
+				return false
+			}
+			cs, ok, err := unstructured.NestedSlice(retrieved2.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			r := findCondition(cs, "Ready")
+			return r != nil && r["status"] == "True"
+		}, timeout, interval).Should(BeTrue())
+
+		// check registration table
+		regTable := object.NewViewObject("amf", "ActiveRegistrationTable")
+		object.SetName(regTable, "", "active-registrations")
+		err = c.Get(ctx, client.ObjectKeyFromObject(regTable), regTable)
+		Expect(err).NotTo(HaveOccurred())
+
+		specs, ok, err := unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok).To(BeTrue())
+		Expect(specs).To(HaveLen(3)) // test-reg!
+		Expect(specs).To(ContainElement(map[string]any{
+			"name":      "user-1",
+			"namespace": "user-1",
+			"suci":      "suci-0-999-01-02-4f2a7b9c8d13e7a5c0",
+			"guti":      "guti-310-170-3F-152-2A-B7C8D9E0",
+		}))
+		Expect(specs).To(ContainElement(map[string]any{
+			"name":      "user-2",
+			"namespace": "user-2",
+			"suci":      "suci-0-999-01-02-4f2a7b9c8d13e7a5c1",
+			"guti":      "guti-310-170-3F-152-2A-B7C8D9E1",
+		}))
+
+		// delete reg-1
+		err = c.Delete(ctx, retrieved1)
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			regTable = object.NewViewObject("amf", "ActiveRegistrationTable")
+			object.SetName(regTable, "", "active-registrations")
+			if c.Get(ctx, client.ObjectKeyFromObject(regTable), regTable) != nil {
+				return false
+			}
+			specs, ok, err = unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
+			return err == nil && ok && len(specs) == 2
+		}, timeout, interval).Should(BeTrue())
+
+		Expect(specs).To(HaveLen(2)) // test-reg!
+		Expect(specs).To(ContainElement(map[string]any{
+			"name":      "user-2",
+			"namespace": "user-2",
+			"suci":      "suci-0-999-01-02-4f2a7b9c8d13e7a5c1",
+			"guti":      "guti-310-170-3F-152-2A-B7C8D9E1",
+		}))
+
+		// delete reg-2
+		err = c.Delete(ctx, retrieved2)
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			regTable = object.NewViewObject("amf", "ActiveRegistrationTable")
+			object.SetName(regTable, "", "active-registrations")
+			if c.Get(ctx, client.ObjectKeyFromObject(regTable), regTable) != nil {
+				return false
+			}
+			specs, ok, err = unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
+			return err == nil && ok && len(specs) == 1
+		}, timeout, interval).Should(BeTrue())
+
+		Expect(specs).To(HaveLen(1)) // test-reg!
+	})
 })

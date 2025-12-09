@@ -44,6 +44,8 @@ controllers:
           spec:
             - suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
               supi: "imsi-999010000000123"
+            - suci: "suci-0-999-01-02-4f2a7b9c8d13e7a5c1"
+              supi: "imsi-999010000000124"
     target:
       kind: SuciToSupiTable
 

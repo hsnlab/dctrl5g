@@ -6,7 +6,7 @@ controllers:
   # TABLE INIT
   #
   ##############################
-  - name: initial-supi-to-guti-table
+  - name: init-supi-to-guti-table
     sources:
       - kind: InitSupiToGutiTable
         type: OneShot
@@ -17,8 +17,30 @@ controllers:
           spec:
             - supi: "imsi-999010000000123"
               guti: "guti-310-170-3F-152-2A-B7C8D9E0"
+            - supi: "imsi-999010000000124"
+              guti: "guti-310-170-3F-152-2A-B7C8D9E1"
     target:
       kind: SupiToGutiTable
+
+  - name: init-active-registration-table
+    sources:
+      - kind: InitActiveRegistrationTable
+        type: OneShot
+    pipeline:
+      - "@project":
+          metadata:
+            name: test-registration
+            namespace: test-registration
+            labels:
+              state: "Ready"
+          spec:
+            mobileIdentity:
+              type: SUCI
+              value: "test-suci-000000000000000"
+            status:
+              guti: "test-guti-000000000000000"
+    target:
+      kind: RegState
 
   ##############################
   #
@@ -89,9 +111,12 @@ controllers:
         labelSelector:
           matchLabels:
             state: Initialized
-      - kind: Registration   # added so that Config gets deleted properly
+      - kind: Registration   # added so that MobileIdentity gets deleted properly
     pipeline:
-      - "@join": true
+      - "@join":
+          "@and":
+            - "@eq": [$.RegState.metadata.name, $.Registration.metadata.name]
+            - "@eq": [$.RegState.metadata.namespace, $.Registration.metadata.namespace]
       - "@project":
           "$.": $.RegState
       - "@project":
@@ -207,6 +232,31 @@ controllers:
                         - "$.Config.status.conditions[?(@.type == 'Ready')].status.message"
     target:
       kind: RegState
+
+  - name: active-registration
+    sources:
+      - kind: RegState
+        labelSelector:
+          matchLabels:
+            state: Ready
+    pipeline:
+      - "@project":
+          type: RegState
+          metadata: $.metadata
+          spec:
+            name: $.metadata.name
+            namespace: $.metadata.namespace
+            suci: $.spec.mobileIdentity.value
+            guti: $.status.guti
+      - "@gather":
+          - $.type
+          - $.spec
+      - "@project":
+          metadata:
+            name: active-registrations
+          spec: $.spec
+    target:
+      kind: ActiveRegistrationTable
 
   - name: register-output
     sources:
