@@ -46,6 +46,7 @@ func StartOps(ctx context.Context, opSpecs []dctrl.OpSpec, port int, logger logr
 	}
 
 	go func() {
+		GinkgoHelper()
 		defer GinkgoRecover()
 		for {
 			select {
@@ -58,6 +59,7 @@ func StartOps(ctx context.Context, opSpecs []dctrl.OpSpec, port int, logger logr
 	}()
 
 	go func() {
+		GinkgoHelper()
 		defer GinkgoRecover()
 		err := d.Start(ctx)
 		Expect(err).NotTo(HaveOccurred())

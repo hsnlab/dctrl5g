@@ -1,0 +1,19 @@
+controllers:
+  ##############################
+  #
+  # TABLE INIT
+  #
+  ##############################
+  - name: init-policy-table
+    sources:
+      - kind: InitPolicyTable
+        type: OneShot
+    pipeline:
+      - "@project":
+          metadata:
+            name: policy-table
+          spec:
+            maxGuaranteeedUplinkBwKbps: 128
+            maxGuaranteeedDownlinkBwKbps: 128
+    target:
+      kind: PolicyTable

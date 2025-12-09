@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"go.uber.org/zap/zapcore"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
@@ -27,6 +28,7 @@ var (
 		TimeEncoder:     zapcore.RFC3339NanoTimeEncoder,
 		Level:           zapcore.Level(loglevel),
 	}))
+	c client.WithWatch
 )
 
 func TestManager(t *testing.T) {

@@ -1,0 +1,164 @@
+# Flow:
+# 1. UE creates Session resource with desired parameters
+# 2. AMF controller:
+#    - Validates UE context (GUTI→SUPI, registration state)
+#    - Checks authorization (Allowed NSSAI)
+#    - Creates SessionContext resource for SMF
+# 3. SMF controller:
+#    - Retrieves policy from PCF
+#    - Merges UE requests with network policy
+#      - May reduce requested bit rates
+#      - May reject certain QoS flows  
+#    - Updates Session status with allocated resources
+#    - Allocates IP address
+#    - Configures UPF (N4 session establishment)
+#      - Create GTP-U tunnel endpoint (UPF TEID for N3)
+#      - Install packet detection rules (PDR)
+#      - Install forwarding action rules (FAR)
+#      - Install QoS enforcement rules (QER)
+#    - Sets SessionContext status to ready
+# 4. AMF controller:
+#    - sets Session status based on SessionContext status
+
+controllers:
+  # ##############################
+  # #
+  # # TABLE INIT
+  # #
+  # ##############################
+  # - name: init-supi-to-guti-table
+  #   sources:
+  #     - kind: InitSupiToGutiTable
+  #       type: OneShot
+  #   pipeline:
+  #     - "@project":
+  #         metadata:
+  #           name: supi-to-guti
+  #         spec:
+  #           - supi: "imsi-999010000000123"
+  #             guti: "guti-310-170-3F-152-2A-B7C8D9E0"
+  #           - supi: "imsi-999010000000124"
+  #             guti: "guti-310-170-3F-152-2A-B7C8D9E1"
+  #   target:
+  #     kind: SupiToGutiTable
+
+  ##############################
+  #
+  # Session context controllers
+  #
+  ##############################
+  - name: session-context-policy
+    sources:
+      - kind: SessionContext
+        predicate: GenerationChanged
+        labelSelector:
+          matchLabels:
+            state: Validated
+      - apiGroup: pcf.view.dcontroller.io
+        kind: PolicyTable
+    pipeline:
+      - "@join": true
+      - "@project":
+          metadata: $.SessionContext.metadata
+          spec: $.SessionContext.spec
+          status: $.SessionContext.status
+          policyTable: $.PolicyTable.spec
+      # filter flows: only ConversationalVoice and BestEffort are supported
+      - "@project":
+          metadata: $.metadata
+          status: $.status
+          policyTable: $.policyTable
+          spec:
+            sessionId: $.spec.sessionId
+            sscMode: $.spec.sscMode
+            guti: $.spec.guti
+            networkConfiguration: $.spec.networkConfiguration
+            nssai: $.spec.nssai
+            pduSessionType: $.spec.pduSessionType
+            qos:
+              flows:
+                "@filter":
+                  - "@or":
+                      - "@eq": [$$.fiveQI, ConversationalVoice]
+                      - "@eq": [$$.fiveQI, BestEffort]
+                  - $.spec.qos.flows
+              rules: $.spec.qos.rules
+      # map policies
+      - "@project":
+          metadata: $.metadata
+          status: $.status
+          spec:
+            sessionId: $.spec.sessionId
+            sscMode: $.spec.sscMode
+            guti: $.spec.guti
+            networkConfiguration: $.spec.networkConfiguration
+            nssai: $.spec.nssai
+            pduSessionType: $.spec.pduSessionType
+            qos:
+              rules: $.spec.qos.rules
+              flows:
+                "@map":
+                  - "@cond":
+                      - "@isnil": $$.bitRates
+                      - name: $$.name
+                        fiveQI: $$.fiveQI
+                      - name: $$.name
+                        fiveQI: $$.fiveQI
+                        bitRates: 
+                          uplinkBwKbps: { "@min": [$$.bitRates.uplinkBwKbps, $.policyTable.maxGuaranteeedDownlinkBwKbps] }
+                          downlinkBwKbps: { "@min": [$$.bitRates.downlinkBwKbps, $.policyTable.maxGuaranteeedUplinkBwKbps] }
+                  - $.spec.qos.flows
+      # allocate IP address and DNS
+      - "@project":
+          - "$.": $.
+          - "@cond":
+              - "@eq": [$.spec.pduSessionType, IPv4]
+              - $.metadata.labels.state: Ready
+                $.status.conditions.policy:
+                  status: "True"
+                  reason: PolicyApplied
+                  message: PCF policies merged
+                $.status.conditions.upf:
+                  status: "True"
+                  reason: UPFConfigured
+                  message: UPF configured
+                $.status.qos: $.spec.qos
+                $.status.networkConfiguration:
+                  ipConfiguration:
+                    "@cond":
+                      - "@eq": [ "$.spec.networkConfiguration.requests[?(@.type == 'IPConfiguration')].addressFamily", IPv4 ]
+                      - ipAddress:
+                          "@concat":
+                            - "10.45.0."
+                            - "@rnd": [2, 255]
+                        subnetMask: "255.255.0.0"
+                        defaultGateway: "10.45.0.1"
+                        mtu: 1500
+                  dnsConfiguration:
+                    "@cond":
+                      - "@eq": [ "$.spec.networkConfiguration.requests[?(@.type == 'DNSServer')].addressFamily", IPv4 ]
+                      - primaryDNS: "8.8.8.8"
+                        secondaryDNS: "8.8.4.4"
+              - $.metadata.labels.state: Rejected
+                $.status.conditions.policy:
+                  status: "False"
+                  reason: AddressFamilyNotSupported
+                  message: Only IPv4 address policy is supported
+    target:
+      kind: SessionContext
+
+  - name: upf-notifier
+    sources:
+      - kind: SessionContext
+        labelSelector:
+          matchLabels:
+            state: Ready
+    pipeline:
+      - "@project":
+          metadata: $.metadata
+          spec:
+            networkConfiguration: $.status.networkConfiguration
+            qos: $.status.qos
+    target:
+      apiGroup: upf.view.dcontroller.io
+      kind: Configuration

@@ -1,5 +1,3 @@
-# state: Rejected | Initialized | IdentityResolved | Ready
-# status: Authenticated, SubscriptionInfoRetrieved, NetworkSliceSelected, Ready
 controllers:
   ##############################
   #
@@ -45,6 +43,8 @@ controllers:
   ##############################
   #
   # Registration controllers
+  # - state: Rejected | Initialized | IdentityResolved | Ready
+  # - status: Validated, Authenticated, SubscriptionInfoRetrieved, Ready
   #
   ##############################
   - name: register-input
@@ -60,7 +60,6 @@ controllers:
               validated: { status: Unknown, message: Pending, reason: Pending }
               authenticated: { status: Unknown, message: Pending, reason: Pending }
               subscriptionInfoRetrieved: { status: Unknown, message: Pending, reason: Pending }
-              networkSliceSelected: { status: Unknown, message: Pending, reason: Pending }
               ready: { status: Unknown, message: Pending, reason: Pending }
       - "@project":
           - "$.": $.
@@ -68,11 +67,21 @@ controllers:
               - "@eq": ["$.spec.registrationType", "initial"]
               - "@cond":
                   - "@eq": [$.spec.ueStatus.n1Mode, true]
-                  - $.metadata.labels.state: Validated
-                    $.status.conditions.validated:
-                      status: "True"
-                      reason: Validated
-                      message: 5G signaling established
+                  - "@cond":
+                      - "@gt":
+                          - "@len":
+                              "@filter": [ {"@eq": ["$$.sliceType", "eMBB"]}, "$.spec.requestedNSSAI"]
+                          - 0
+                      - $.metadata.labels.state: Validated
+                        $.status.conditions.validated:
+                          status: "True"
+                          reason: Validated
+                          message: 5G signaling established
+                      - $.metadata.labels.state: Rejected
+                        $.status.conditions.validated:
+                          status: "False"
+                          reason: NSSAIRejected
+                          message: Only NSSAI eMBB supported
                   - $.metadata.labels.state: Rejected
                     $.status.conditions.validated:
                       status: "False"
@@ -169,10 +178,7 @@ controllers:
                 $.status.conditions.authenticated:
                   status: "False"
                   reason: SupiNotFound
-                  message:
-                    "@concat":
-                      - "Failed to establish mobile identify: "
-                      - "$.MobileIdentity.status.conditions[?(@.type == 'Ready')].message"
+                  message: "Failed to establish mobile identify: SUPI not found"
     target:
       kind: RegState
 
@@ -283,6 +289,8 @@ controllers:
           status:
             config: $.RegState.status.config
             guti: $.RegState.status.guti
+            allowedNSSAI:
+              "@filter": [ {"@eq": ["$$.sliceType", "eMBB"]}, "$.RegState.spec.requestedNSSAI"]
             conditions:
               - "@cond":
                   - "@eq": ["$.RegState.metadata.labels.state", Ready]
@@ -308,9 +316,145 @@ controllers:
                 status: $.RegState.status.conditions.subscriptionInfoRetrieved.status
                 reason: $.RegState.status.conditions.subscriptionInfoRetrieved.reason
                 message: $.RegState.status.conditions.subscriptionInfoRetrieved.message
-              - type: NetworkSliceSelected
-                status: "True"
-                reason: NetworkSliceFound
-                message: Network slice selected
     target:
       kind: Registration
+
+
+  ##############################
+  #
+  # Session controllers
+  # - state: Rejected | Validated | Registered | IdentityResolved | Ready
+  # - status: PolicyApplied, UPFConfigured, Ready
+  #
+  # ##############################
+  - name: session-input
+    sources:
+      - kind: Session
+        predicate: GenerationChanged
+      - kind: SupiToGutiTable
+      - kind: ActiveRegistrationTable
+    pipeline:
+      - "@join": true
+      - "@project":
+          metadata: $.Session.metadata
+          spec: $.Session.spec
+          status:
+            conditions:
+              validated: { status: Unknown, message: Pending, reason: Pending }
+              policy: { status: Unknown, message: Pending, reason: Pending }
+              upf: { status: Unknown, message: Pending, reason: Pending }
+              ready: { status: Unknown, message: Pending, reason: Pending }
+          guti2Supi: $.SupiToGutiTable.spec
+          activeRegistrations: $.ActiveRegistrationTable.spec
+      - "@project":
+          - "$.": $.
+          - "@cond":
+              - "@or":
+                  - "@isnil": $.spec.networkConfiguration
+                  - "@isnil": $.spec.qos
+                  - "@isnil": $.spec.qos.flows
+                  - "@isnil": $.spec.qos.rules
+              - $.metadata.labels.state: Rejected
+                $.status.conditions.validated:
+                  status: "False"
+                  reason: InvalidSession
+                  message: Failed to validate Session spec
+              - "@cond":
+                  - "@not": { "@eq": [ $.spec.nssai, eMBB ]}
+                  - $.metadata.labels.state: Rejected
+                    $.status.conditions.validated:
+                      status: "False"
+                      reason: NSSAINotPermitted
+                      message: Network slice not permitted
+                  - "@cond":
+                      - "@isnil": $.spec.guti
+                      - $.metadata.labels.state: Rejected
+                        $.status.conditions.validated:
+                          status: "False"
+                          reason: GUTINotSpeficied
+                          message: GUTI not specified
+                      - "@cond":
+                          - "@isnil": "$.activeRegistrations[?(@.guti == $.spec.guti)]"
+                          - $.metadata.labels.state: Rejected
+                            $.status.conditions.validated:
+                              status: "False"
+                              reason: Unregistered
+                              message: Registration not found
+                          - "@cond":
+                              - "@isnil": "$.guti2Supi[?(@.guti == $.spec.guti)]"
+                              - $.metadata.labels.state: Rejected
+                                $.status.conditions.validated:
+                                  status: "False"
+                                  reason: SUPINotFound
+                                  message: SUPI not found
+                              - $.metadata.labels.state: Validated
+                                $.status.conditions.validated:
+                                  status: "True"
+                                  reason: Validated
+                                  message: Session request validated
+                                $.status.supi: "$.guti2Supi[?(@.guti == $.spec.guti)].supi"
+                                $.status.guti: $.spec.guti
+                                $.status.suci: "$.activeRegistrations[?(@.guti == $.spec.guti)].suci"
+                                $.status.name: "$.activeRegistrations[?(@.guti == $.spec.guti)].name"
+                                $.status.namespace: "$.activeRegistrations[?(@.guti == $.spec.guti)].namespace"
+      - "@project": # remove tables
+          - metadata: $.metadata
+          - spec: $.spec
+          - status: $.status
+    target:
+      apiGroup: smf.view.dcontroller.io
+      kind: SessionContext
+
+  - name: session-output
+    sources:
+      - kind: Session
+      - apiGroup: smf.view.dcontroller.io
+        kind: SessionContext
+        labelSelector:
+          matchExpressions:
+            - key: state
+              operator: In
+              values: ["Ready", "Rejected"]
+    pipeline:
+      - "@join":
+          "@and":
+            - "@eq": [$.Session.metadata.name, $.SessionContext.metadata.name]
+            - "@eq": [$.Session.metadata.namespace, $.SessionContext.metadata.namespace]
+      - "@project":
+          metadata:
+            name: $.Session.metadata.name
+            namespace: $.Session.metadata.namespace
+            labels: $.Session.metadata.labels
+            annotations: $.Session.metadata.annotations
+          spec: $.SessionContext.spec
+          status:
+            guti: $.SessionContext.spec.guti
+            suci: $.SessionContext.spec.suci
+            networkConfiguration: $.SessionContext.status.networkConfiguration
+            qos: $.SessionContext.status.qos
+            conditions:
+              - "@cond":
+                  - "@eq": ["$.SessionContext.metadata.labels.state", Ready]
+                  - type: Ready
+                    status: "True"
+                    reason: SessionSuccessful
+                    message: Session successfully established
+                  - type: Ready
+                    status: "False"
+                    reason: SessionFailed
+                    message: Session establishment failed
+              - type: Validated
+                status: $.SessionContext.status.conditions.validated.status
+                reason: $.SessionContext.status.conditions.validated.reason
+                message: $.SessionContext.status.conditions.validated.message
+              - type: PolicyApplied
+                status: $.SessionContext.status.conditions.policy.status
+                reason: $.SessionContext.status.conditions.policy.reason
+                message: $.SessionContext.status.conditions.policy.message
+              - type: UPFConfigured
+                status: $.SessionContext.status.conditions.upf.status
+                reason: $.SessionContext.status.conditions.upf.reason
+                message: $.SessionContext.status.conditions.upf.message
+    target:
+      kind: Session
+      
