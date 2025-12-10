@@ -968,7 +968,7 @@ spec:
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Validated"))
 			Expect(cond["status"]).To(Equal("False"))
-			Expect(cond["reason"]).To(Equal("GUTINotSpeficied"))
+			Expect(cond["reason"]).To(Equal("GutiNotSpeficied"))
 
 			cond = findCondition(conds, "Ready")
 			Expect(cond).NotTo(BeNil())

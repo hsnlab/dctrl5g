@@ -401,7 +401,7 @@ controllers:
                       - conditions:
                           validated:
                             status: "False"
-                            reason: GUTINotSpeficied
+                            reason: GutiNotSpeficied
                             message: GUTI not specified
                           policy: $.status.conditions.policy
                           upf: $.status.conditions.upf
@@ -419,7 +419,7 @@ controllers:
                               - conditions:
                                   validated:
                                     status: "False"
-                                    reason: SUPINotFound
+                                    reason: SupiNotFound
                                     message: SUPI not found
                                   policy: $.status.conditions.policy
                                   upf: $.status.conditions.upf
