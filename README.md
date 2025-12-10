@@ -1,4 +1,4 @@
-#  Declarative 5G control plane simulator 
+#  Declarative 5G control plane simulator
 
 A simulator for the 5G UE and control plane interactions using the declarative Δ-controller framework.
 
@@ -11,34 +11,34 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 1. Start the operators using unsafe HTTP mode:
    ```bash
-   go run main.go --http -zap-log-level 4
+   $ go run main.go --http -zap-log-level 4
    ```
 
 2. Create an admin config:
    ```bash
-   dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
+   $ dctl generate-config --http --insecure --user=admin --namespaces="*" > ./admin.config
    ```
 
 3. Make a client request:
    ```bash
-   export KUBECONFIG=./admin.config 
+   $ export KUBECONFIG=./admin.config
    ```
 
 ### Production
 
 1. Generate the TLS certificate:
    ```bash
-   dctl generate-keys
+   $ dctl generate-keys
    ```
 
 2. Start the operators:
    ```bash
-   go run main.go -zap-log-level 4
+   $ go run main.go -insecure -zap-log-level 1
    ```
 
 3. Create **initial user config**, which will only allow the a user with name `user-1` to register:
    ```bash
-   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
+   $ dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
     --rules='[{"verbs":["create","get","list","watch","delete"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
     > ./user-1-initial.config
    ```
@@ -46,33 +46,174 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 4. To interact with the API server with **full admin access**, load the config generated as follows:
 
    ```bash
-   dctl generate-config --user=<admin> --insecure \
+   $ dctl generate-config --user=<admin> --insecure \
     --rules='[{"verbs":["*"],"apiGroups":["*"],"resources":["*"]}]' \
     > ./admin.config
    ```
 
-## Workflows
+## Registration
 
-### Registration
+### The Registration resource
 
-Init the operators using the production mode and assume again username is `<user-1>`. 
+The registration resource is the main driver for creating UE registrations. The UE specifies the registration parameters in the spec of the Registration resource and the AMF will add a status to indicate the registration status plus some useful info. Note that the annotations are optional, but the spec parameters are mandatory (checked and rejected in missing or invalid)
+
+The below dump shows a full Registration resource with a valid status set by the AMF:
+
+``` yaml
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Registration
+metadata:
+  name: user-1
+  namespace: user-1
+  labels:
+    equipment.type: "smartphone"           # Equipment type: enum: smartphone | iot | vehicle | etc
+  annotations:
+    interface: "N1-NAS-MM"                 # Protocol interface
+    ran.node: "gnb-site-4-sector-2"        # RAN information
+spec:
+  registrationType: initial                # Options: initial | mobility | periodic | emergency
+  accessType: "3gpp"                       # enum: 3gpp | non-3gpp | both
+  trackingArea: "tai-001-01-000001"        # Registration area (TAI where registration initiated)
+  mobileIdentity:
+    type: SUCI                             # Options: SUCI | SUPI | GUTI | IMEI | IMEISV | TMSI
+    value: "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
+  ueSecurityCapability:
+    encryptionAlgorithms:                  # Ordered by preference (first = most preferred)
+      - 5G-EA0                             # Null encryption (no protection)
+      - 5G-EA1                             # 128-bit SNOW 3G
+      - 5G-EA2                             # 128-bit AES
+      - 5G-EA3                             # 128-bit ZUC
+    integrityAlgorithms:                   # Ordered by preference
+      - 5G-IA0                             # Null integrity (no protection)
+      - 5G-IA1                             # 128-bit SNOW 3G
+      - 5G-IA2                             # 128-bit AES-CMAC
+      - 5G-IA3                             # 128-bit ZUC
+  ueStatus:
+    s1Mode: false                          # EPC/LTE interworking capability
+    n1Mode: true                           # 5GC/NR native mode capability
+  ueNetworkCapability:                     # LTE/EPS capabilities for interworking
+    epsEncryptionAlgorithms:
+      - EEA0                               # Options: EEA0, EEA1, EEA2, EEA3
+    epsIntegrityAlgorithms:
+      - EIA0                               # Options: EIA0, EIA1, EIA2, EIA3
+  requestedNSSAI:                          # Requested network slices
+    - sliceType: eMBB                      # Options: eMBB | URLLC | MIoT | V2X | custom
+      sliceDifferentiator: "000001"        # Optional, for multiple slices of same type
+    - sliceType: URLLC                     # Only eMBB (Enhanced Mobile Broadband) is supported
+      sliceDifferentiator: "000002"
+status:                                    # Set by the AMF
+  guti: guti-310-170-3F-152-2A-B7C8D9E0    # GUTI, generated by the AMF
+  allowedNSSAI:                            # Selected network slice
+  - sliceDifferentiator: "000001"
+    sliceType: eMBB
+  conditions:
+  - message: Registration successful       # Indicates overall regitreation success
+    reason: RegistrationSuccessful
+    status: "True"
+    type: Ready
+  - message: Validated                     # Indicates whether the spec is valid and allowed
+    reason: Validated
+    status: "True"
+    type: Validated
+  - message: UE successfully authenticated # Indicates whether encrypted security context could be established
+    reason: AuthenticationSuccess
+    status: "True"
+    type: Authenticated
+  - message: UE config successfully loaded # Indicates whether a user config is available
+    reason: ConfigReady
+    status: "True"
+    type: SubscriptionInfoRetrieved
+  config: <full-user-kubeconfig>
+```
+
+### Control loops
+
+Registration resources are first processed by the AMF (Access and Mobility Management Function). Later steps involve the AUSF (Authentication Server Function) and the UDM (Unified Data Management) function.
+
+Consider the below sequence diagram:
+
+``` mermaid
+sequenceDiagram
+    User->>+AMF: Create Registration
+    Note right of AMF: Validate Registration spec
+    Note right of AMF: Reject invalid registrations Registration spec
+    AMF->>+AUSF: Create MobileIdentity
+    Note right of AUSF: Map SUCI to SUPI and add to status
+    AUSF->>-AMF: Return MobileIdentity status
+    Note right of AMF: Genetate GUTI from SUPI
+    AMF->>+UDM: Create Config
+    Note right of UDM: Add user config to Config status
+    UDM->>-AMF: Return Config status
+    Note right of AMF: Update Registration status
+```
+
+The AMF control loops are as follows:
+1. Control loop `register-input`. Purpose: validate AMF:Registration and write to internal state. Watches: AMF:Registration. Predicates: `GenerationChanged`. Writes to AMF:RegState (internal registration state).
+   1. Create an empty AMF:RegState resource
+   2. Initialize status fields.
+   3. Check registration type. If not `initial`, set `Validated` status to `False` with reason `InvalidType`.
+   4. Check 5GC/NR native mode. If not `n1Mode`, set `Validated` status to `False` with reason `StandardNotSupported`.
+   5. Check mobile identity. If type is not `SUCI` or the value is empty, set `Validated` status to `False` with reason `SuciNotFound`.
+   6. Check UE security capability. If the encryption algorithms list does not contain `5G-EA2` or the integrity algorithms list does not contain `5G-IA2`, set `Validated` status to `False` with reason `EncyptionNotSupported`.
+   7. Otherwise set `Validated` status to `True` with reason `Validated`.
+   8. Write AMF:RegState.
+2. Control loop `register-identity-req`. Purpose: generate mobile identity requests for the AUSF. Watches: AMF:RegState. Predicates: runs only if the `Validated` status is `True`. Writes to: AUSF:MobileIdentity.
+   1. Create an empty AUSF:MobileIdentity resource.
+   2. Set the SUCI in the spec.
+   3. Send to the AUSF.
+3. Control loop `register-identity-handler`. Purpose: handle mobile identity responses from the AUSF. Watches: AMF:RegState and AUSF:MobileIdentity. Predicates: runs only if AMF:RegState `Validated` status is `True` and the MobileIdeintity is labeled `state:Ready`. Writes to: AMF:RegState.
+   1. Join on metadata.
+   2. Check is AUSF:MobileIdentity `Reeady` status is true. If not, set the `Authenticated` status to `False` with reason `SupiNotFound`.
+   3. Genetate a GUTI based on the SUPI returned by the AUSF and add to the status.
+   4. Set the AMF:RegState `Authenticated` status to `True` with reason `AuthenticationSuccess`.
+   5. Write AMF:RegState.
+4. Control loop `register-config-req`. Purpose: generate a config request to the UDM in order to obtain a secure context for the user. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `Authenticated` status is `True`. Writes to: UDM:Config.
+   1. Create an empty UDM:Config resource
+   2. Set metadata.
+   3. Send to the UDM.
+5. Control loop `register-config-handler`. Purpose: handle configs from the UDM. Watches: AMF:RegState and UDM:Config. Predicates: runs only if AMF:RegState `Authenticated` status is `True`. Writes to: AMF:RegState.
+   1. Join on metadata.
+   2. Check is UDM:Config `Reeady` status is true. If not, set the `SubscriptionInfoFound` status to `False` with reason `ConfigNotFound`.
+   3. Otherwise add the config returned by the UDM to the status and the `SubscriptionInfoFound` status to `True` with reason `ConfigReady`.
+   4. Write to AMF:RegState.
+6. Control loop `register-output`. Purpose: write state maintained in the internal AMF:RegState back into the user-visible AMF:Registration resources. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `SubscriptionInfoFound` status is `True`. Writes to: AMF:Registration.
+   1. If each of the `Validated`, `Authenticated`, and `SubscriptionInfoFound` status is `True`, set the `Ready` status to `True` with reason `RegistrationSuccessful`. Otherwise set the `Ready` status to `False` with reason `RegistrationFailed`.
+   2. Copy the `Validated` status from the internal state to the AMF:Registration resource status conditions.
+   3. Copy the `Authenticated` status from the internal state to the AMF:Registration resource status conditions.
+   4. Copy the `SubscriptionInfoFound` status from the internal state to the AMF:Registration resource status conditions.
+   5. Copy the rest of the status fields from the AMFRegState into the AMF:Registration status.
+   4. Write to AMF:Registration.
+7. Control loop `active-registration`. Purpose: maintain the active-registration table. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `Ready` status is `True`. Writes to: AMF:ActiveRegistrationTable.
+   1. Create an empty AMF:ActiveRegistrationTable resource.
+   2. Gather the name, namespace, GUTI and SUCI from all RegState resources into a list.
+   4. Update AMF:ActiveRegistrationTable.
+
+The AUSF control loops are as follows:
+1. Control loop `supi-req-handler`. Purpose: look up the SUPI based on the SUCI. Watches: AUSF:MobileIdentity. Predicates: generation changed. Writes to: AUSF:MobileIdentity.
+   1. Look up the SUPI based on the SUCI in the request. If successful, set the `Ready` status to `True` with reason `Ready`, otherwise set `Ready` to `False` with reason `MobileIdentityNotFound`.
+   2. Set the label `state:Ready`
+   4. Write status back to AUSF:MobileIdentity.
+
+### Getting started
+
+Init the operators using the production mode and assume again username is `user-1`.
 
 1. Load the initial config of the user:
 
    ```bash
-   export KUBECONFIG=./user-1-initial.config
+   $ export KUBECONFIG=./user-1-initial.config
    ```
 
 2. Optionally query the initial config. Observe only basic access rights are enabled for the user to the `registration` resource, and only in their own namespace. This effectively isolates users from each other, preventing malicious users from modifying the registration state of other users.
 
    ```bash
-   dctl get-config 
+   $ dctl get-config
    👤 User Information:
       Username:   user-1
       Namespaces: [user-1]
       Rules: 1 RBAC policy rules
         [1] verbs=[create get list watch] apiGroups=[amf.view.dcontroller.io] resources=[registration]
-   
+
    ⏱️  Token Metadata:
       Issuer:     dcontroller
       Issued At:  ...
@@ -84,13 +225,13 @@ Init the operators using the production mode and assume again username is `<user
 2. Register the user at the AMF:
 
    ```bash
-   kubectl apply -f workflows/registration/registration-user-1.yaml
+   $ kubectl apply -f workflows/registration/registration-user-1.yaml
    ```
 
 3. Check registration status: you should get a valid `Ready` status (plus lots of other useful statuses):
 
    ```bash
-   kubectl -n user-1 get registration user-1 -o jsonpath='{.status.conditions}'|jq .
+   $ kubectl -n user-1 get registration user-1 -o jsonpath='{.status.conditions}'|jq .
    [
      {
        "message": "Registration successful",
@@ -118,27 +259,205 @@ Init the operators using the production mode and assume again username is `<user
      }
    ]
    ```
-   
+
 4. Load the config returned by the AMF: this should now allow fine-grained access policies beyond the basic registration workflow:
 
    ```bash
-   kubectl -n user-1 get registration user-1 -o jsonpath='{.status.config}' > ./user-1-full.config
-   export KUBECONFIG=./user-1-full.config
+   $ kubectl -n user-1 get registration user-1 -o jsonpath='{.status.config}' > ./user-1-full.config
+   $ export KUBECONFIG=./user-1-full.config
    ```
 
 5. Check the new credentials:
 
    ```bash
-   dctl get-config 
+   $ dctl get-config
    ...
    ```
 
-6. Optionally, clean up the registration:
+6. In another terminal load the admin config and check the table maintaining the active registrations. Observe that the registration for `user-1` is added to the list
 
    ```bash
-   kubectl delete -f workflows/registration/registration-user-1.yaml
+   $ export KUBECONFIG=./admin.config
+   $ kubectl get activeregistrationtable --all-namespaces -o yaml
+   apiVersion: v1
+   items:
+   - apiVersion: amf.view.dcontroller.io/v1alpha1
+     kind: ActiveRegistrationTable
+     metadata:
+       name: active-registrations
+       uid: f092b6bb-feed-e377-41e1-652ff1d962ed
+     spec:
+     - guti: test-guti-000000000000000
+       name: test-registration
+       namespace: test-registration
+       suci: test-suci-000000000000000
+     - guti: guti-310-170-3F-152-2A-B7C8D9E0
+       name: user-1
+       namespace: user-1
+       suci: suci-0-999-01-02-4f2a7b9c8d13e7a5c0
+   kind: List
+   metadata:
+     resourceVersion: ""
    ```
-   
+
+7. Optionally, clean up the registration:
+
+   ```bash
+   $ kubectl delete -f workflows/registration/registration-user-1.yaml
+   ```
+
+## Session establishment
+
+### Getting started
+
+Make sure a registration exists for the current user name and the full user config is loaded as above. We assume again that the username is `user-1`.
+
+1. Create a session `user-1-1`:
+
+   ```bash
+   $ kubectl apply -f workflows/session/session-1-1.yaml
+   ```
+
+2. Check session status: you should get a valid `Ready` status (plus lots of other useful statuses):
+
+   ```bash
+   $ kubectl get session -n user-1 user-1-1 -o jsonpath='{.status.conditions}'|yq -P
+   - message: Session successfully established
+     reason: SessionSuccessful
+     status: "True"
+     type: Ready
+   - message: Session request validated
+     reason: Validated
+     status: "True"
+     type: Validated
+   - message: PCF policies merged
+     reason: PolicyApplied
+     status: "True"
+     type: PolicyApplied
+   - message: UPF configured
+     reason: UPFConfigured
+     status: "True"
+     type: UPFConfigured
+  ```
+
+3. The SMF should have created an UPF config for the session. Note that the user cannot access the UPF config, therefore we have to switch to admin access to see the details.
+
+   ```bash
+   $ export KUBECONFIG=./admin.config
+   $ kubectl get config.upf -n user-1 user-1-1 -o yaml
+   apiVersion: upf.view.dcontroller.io/v1alpha1
+   kind: Config
+   metadata:
+     name: user-1-1
+     namespace: user-1
+   spec:
+     networkConfiguration:
+       dnsConfiguration:
+         primaryDNS: 8.8.8.8
+         secondaryDNS: 8.8.4.4
+       ipConfiguration:
+         defaultGateway: 10.45.0.1
+         ipAddress: 10.45.0.100
+         mtu: 1500
+         subnetMask: 255.255.0.0
+     qos:
+       flows: ...
+       rules: ...
+   ```
+
+4. Again, switching to admin access allows you to browse the active session list:
+
+   ```bash
+   $ export KUBECONFIG=./admin.config
+   $ kubectl get activesessiontable --all-namespaces -o yaml
+   apiVersion: v1
+   items:
+   - apiVersion: smf.view.dcontroller.io/v1alpha1
+     kind: ActiveSessionTable
+     metadata:
+       name: active-sessions
+       uid: e66bcdbc-90e8-ac13-fd3c-5dccb77a88a0
+     spec:
+     - guti: test-guti-000000000000000
+       idle: false
+       name: test-session
+       namespace: test-session
+       sessionId: 0
+     - guti: guti-310-170-3F-152-2A-B7C8D9E0
+       idle: false
+       name: user-1-1
+       namespace: user-1
+       sessionId: 1
+   kind: List
+   metadata:
+     resourceVersion: ""
+   ```
+
+## Session idle transition
+
+### Getting started
+
+Make sure a registration and a session exists for the `user-1` and the full user config is loaded.
+
+1. Optionally, set up a watch for the UPF configs of `user-1`. This will dump a line every time we de-activate or activate a session for `user-1` (note that this requires admin access):
+
+   ```bash
+   $ kubectl get config.upf -n user-1 -w
+   ```
+
+2. Request an idle transition for session `user-1-1`.
+
+   ```bash
+   $ kubectl apply -f workflows/session/contextrelease-1-1.yaml
+   ```
+
+3. Check the status: you should get a valid `Ready` status:
+
+   ```bash
+   $ kubectl get contextrelease -n user-1 user-1-1 -o jsonpath='{.status.conditions}'|yq -P
+   - message: Context release request accepted
+     reason: Ready
+     status: "True"
+     type: Ready
+  ```
+
+  Meanwhile, the watch should dump a new line `user-1-1`, indicating that the UPF config for the `user-1-1` session has changed. Listing the actual UPF config will show that the config has gone.
+
+   ```bash
+   $ kubectl get config.upf -n user-1 user-1-1
+   Error from server (NotFound): the server could not find the requested resource
+   ```
+
+4. You can re-activate the session by deleting the context release resource.
+
+   ```bash
+   $ kubectl delete -f workflows/session/contextrelease-1-1.yaml
+   ```
+
+   Again, the watch should dump a new line. Checking again the UPF configs (with admin access) will show the config for the session to re-appear, with exactly the same settings as before:
+
+   ```bash
+   kubectl get config.upf -n user-1 user-1-1 -o yaml
+   apiVersion: upf.view.dcontroller.io/v1alpha1
+   kind: Config
+   metadata:
+     name: user-1-1
+     namespace: user-1
+   spec:
+     networkConfiguration:
+       dnsConfiguration:
+         primaryDNS: 8.8.8.8
+         secondaryDNS: 8.8.4.4
+       ipConfiguration:
+         defaultGateway: 10.45.0.1
+         ipAddress: 10.45.0.100
+         mtu: 1500
+         subnetMask: 255.255.0.0
+     qos:
+       flows: ...
+       rules: ...
+   ```
+
 ## License
 
 MIT License

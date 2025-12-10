@@ -1,0 +1,59 @@
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Session
+metadata:
+  name: user-1-1
+  namespace: user-1
+spec:
+  nssai: eMBB
+  guti: guti-310-170-3F-152-2A-B7C8D9E0
+  sessionId: 1
+  pduSessionType: IPv4
+  sscMode: SSC1
+  networkConfiguration:
+    requests:
+      - type: IPConfiguration
+        addressFamily: IPv4  # Internet Protocol Control Protocol
+      - type: DNSServer
+        addressFamily: IPv4
+  qos:
+    flows:
+      - name: voice-flow
+        fiveQI: ConversationalVoice  # Maps to standardized 5QI=1
+        bitRates:
+          uplinkBwKbps: 256
+          downlinkBwKbps: 256
+      - name: best-effort-flow
+        fiveQI: BestEffort
+      - name: dummy-flow
+        fiveQI: Dummy
+    rules:
+      - name: voice-rule
+        precedence: 10
+        default: false
+        qosFlow: voice-flow
+        filters:
+          - name: sip-signaling
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              parameters:
+                protocol: UDP
+                destinationPort: 5060
+          - name: rtp-voice
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              parameters:
+                protocol: UDP
+                destinationPortRange:
+                  start: 16384
+                  end: 32767
+      - name: default-rule
+        precedence: 255
+        default: true
+        qosFlow: best-effort-flow
+        filters:
+          - name: match-all
+            direction: Bidirectional
+            match:
+              type: MatchAll  # Special type for default rule

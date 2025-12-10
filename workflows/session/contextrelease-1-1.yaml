@@ -1,0 +1,8 @@
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: ContextRelease
+metadata:
+  name: user-1-1
+  namespace: user-1
+spec:
+  guti: "guti-310-170-3F-152-2A-B7C8D9E0"
+  sessionId: 1
