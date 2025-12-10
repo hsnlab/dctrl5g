@@ -35,6 +35,7 @@ var _ = Describe("AMF Operator", func() {
 			{Name: "ausf", File: "ausf.yaml"},
 			{Name: "smf", File: "smf.yaml"},
 			{Name: "pcf", File: "pcf.yaml"},
+			{Name: "upf", File: "upf.yaml"},
 			// UDM is manual
 		}, 0, logger)
 		Expect(err).NotTo(HaveOccurred())
@@ -585,7 +586,7 @@ spec:
 			specs, ok, err := unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ok).To(BeTrue())
-			Expect(specs).To(HaveLen(3)) // test-reg!
+			Expect(specs).To(HaveLen(3)) // test-reg
 			Expect(specs).To(ContainElement(map[string]any{
 				"name":      "user-1",
 				"namespace": "user-1",
@@ -1004,6 +1005,18 @@ spec:
 				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) == nil
 			}, timeout, interval).Should(BeTrue())
 
+			// we should get 2 configs in the active UPF Config table
+			Eventually(func() bool {
+				regTable := object.NewViewObject("upf", "ActiveConfigTable")
+				object.SetName(regTable, "", "active-configs")
+				if c.Get(ctx, client.ObjectKeyFromObject(regTable), regTable) != nil {
+					return false
+				}
+				specs, ok, err := unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
+				// test-session created by the smf generates a test config
+				return err == nil && ok && len(specs) == 2
+			}, timeout, interval).Should(BeTrue())
+
 			yamlData := `
 apiVersion: amf.view.dcontroller.io/v1alpha1
 kind: ContextRelease
@@ -1067,6 +1080,18 @@ spec:
 			object.SetName(retrieved, "user-1", "user-1")
 			Eventually(func() bool {
 				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil
+			}, timeout, interval).Should(BeTrue())
+
+			// we should get 1 configs in the active UPF Config table
+			Eventually(func() bool {
+				regTable := object.NewViewObject("upf", "ActiveConfigTable")
+				object.SetName(regTable, "", "active-configs")
+				if c.Get(ctx, client.ObjectKeyFromObject(regTable), regTable) != nil {
+					return false
+				}
+				specs, ok, err := unstructured.NestedSlice(regTable.UnstructuredContent(), "spec")
+				// test-session created by the smf generates a test config
+				return err == nil && ok && len(specs) == 1
 			}, timeout, interval).Should(BeTrue())
 		})
 

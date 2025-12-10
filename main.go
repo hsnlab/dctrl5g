@@ -23,6 +23,10 @@ var (
 	OpSpecs    = []dctrl.OpSpec{
 		{Name: "amf", File: "internal/operators/amf.yaml"},
 		{Name: "ausf", File: "internal/operators/ausf.yaml"},
+		{Name: "smf", File: "internal/operators/smf.yaml"},
+		{Name: "pcf", File: "internal/operators/pcf.yaml"},
+		{Name: "upf", File: "internal/operators/upf.yaml"},
+		// UDM is manual
 	}
 )
 

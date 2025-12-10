@@ -1,0 +1,27 @@
+controllers:
+  ##############################
+  #
+  # Config controllers
+  #
+  ##############################
+  - name: active-config
+    sources:
+      - kind: Config
+    pipeline:
+      - "@project":
+          type: Config
+          metadata: $.metadata
+          spec:
+            name: $.metadata.name
+            namespace: $.metadata.namespace
+            networkConfiguration: $.spec.networkConfiguration
+            qos: $.spec.qos
+      - "@gather":
+          - $.type
+          - $.spec
+      - "@project":
+          metadata:
+            name: active-configs
+          spec: $.spec
+    target:
+      kind: ActiveConfigTable
