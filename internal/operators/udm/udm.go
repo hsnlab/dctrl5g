@@ -8,6 +8,7 @@ package udm
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -38,7 +39,7 @@ const OperatorName = "udm"
 var RBACRules = []rbacv1.PolicyRule{{
 	Verbs:     []string{"create", "get", "list", "watch", "delete"},
 	APIGroups: []string{"amf.view.dcontroller.io"},
-	Resources: []string{"registration", "session"},
+	Resources: []string{"registration", "session", "contextrelease"},
 }}
 
 type Options struct {
@@ -174,10 +175,11 @@ func (r *udmController) Reconcile(ctx context.Context, req reconciler.Request) (
 }
 
 func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error) {
-	guti := obj.GetName()
-	namespacesList := []string{guti}
+	// user restricted to the identically named user
+	user := obj.GetNamespace()
+	namespacesList := []string{user}
 	rulesList := RBACRules
-	token, err := r.generator.GenerateToken(guti, namespacesList, rulesList, 168*time.Hour)
+	token, err := r.generator.GenerateToken(user, namespacesList, rulesList, 168*time.Hour)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
@@ -191,7 +193,18 @@ func (r *udmController) getKubeConfig(obj object.Object) (map[string]any, error)
 		HTTPMode:         r.opts.HTTPMode,
 	}
 
-	config := auth.GenerateKubeconfig(r.serverAddress, guti, token, kubeconfigOpts)
+	// rewrite to localhost so that we have a SAN
+	addr := r.serverAddress
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse server address %q: %w", addr, err)
+	}
+
+	if host == "127.0.0.1" {
+		host = "localhost"
+	}
+
+	config := auth.GenerateKubeconfig(net.JoinHostPort(host, port), user, token, kubeconfigOpts)
 
 	// convert to unstructured
 	yamlData, err := clientcmd.Write(*config)

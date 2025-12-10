@@ -36,9 +36,9 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
    go run main.go -zap-log-level 4
    ```
 
-3. Create **initial user config**, which will only allow the user to register:
+3. Create **initial user config**, which will only allow the a user with name `user-1` to register:
    ```bash
-   dctl generate-config --user=<username> --namespaces=<username> --insecure \
+   dctl generate-config --user=user-1 --namespaces=user-1 --insecure \
     --rules='[{"verbs":["create","get","list","watch","delete"],"apiGroups":["amf.view.dcontroller.io"],"resources":["registration"]}]' \
     > ./user-1-initial.config
    ```
@@ -55,7 +55,7 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 ### Registration
 
-Init the operators using the production mode and assume username is `<user-1>`. 
+Init the operators using the production mode and assume again username is `<user-1>`. 
 
 1. Load the initial config of the user:
 
@@ -91,13 +91,32 @@ Init the operators using the production mode and assume username is `<user-1>`.
 
    ```bash
    kubectl -n user-1 get registration user-1 -o jsonpath='{.status.conditions}'|jq .
-   {
-     "lastTransitionTime": "2025-11-25T13:49:51Z",
-     "message": "Registration successful",
-     "reason": "Registered",
-     "status": "True",
-     "type": "Registered"
-   }
+   [
+     {
+       "message": "Registration successful",
+       "reason": "RegistrationSuccessful",
+       "status": "True",
+       "type": "Ready"
+     },
+     {
+       "message": "Validated",
+       "reason": "Validated",
+       "status": "True",
+       "type": "Validated"
+     },
+     {
+       "message": "UE successfully authenticated",
+       "reason": "AuthenticationSuccess",
+       "status": "True",
+       "type": "Authenticated"
+     },
+     {
+       "message": "UE config successfully loaded",
+       "reason": "ConfigReady",
+       "status": "True",
+       "type": "SubscriptionInfoRetrieved"
+     }
+   ]
    ```
    
 4. Load the config returned by the AMF: this should now allow fine-grained access policies beyond the basic registration workflow:
