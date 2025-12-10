@@ -2,13 +2,16 @@ package operators
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/hsnlab/dctrl5g/internal/testsuite"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -44,10 +47,10 @@ var _ = Describe("SMF Operator", func() {
 		cancel()
 	})
 
-	Context("When receiving a Session context UE", Ordered, Label("amf"), func() {
+	Context("When receiving a Session context UE", Ordered, Label("smf"), func() {
 		It("should accept a legitimate SessionContext", func() {
-			retrieved := initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
-				labelCond{"state", "Ready"})
+			retrieved := initSessionContext(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"policy", "True"}, statusCond{"upf", "True"})
 			Expect(retrieved).NotTo(BeNil())
 
 			cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
@@ -105,18 +108,14 @@ var _ = Describe("SMF Operator", func() {
 		})
 
 		It("should create a UPF config for a legitimate SessionContext", func() {
-			retrieved := initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
-				labelCond{"state", "Ready"})
+			retrieved := initSessionContext(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"upf", "True"})
 			Expect(retrieved).NotTo(BeNil())
 
 			retrieved = object.NewViewObject("upf", "Config")
 			object.SetName(retrieved, "user-1", "user-1")
 			Eventually(func() bool {
-				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
-					return false
-				}
-				labels := retrieved.GetLabels()
-				return len(labels) != 0 || labels["state"] == "Ready"
+				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) == nil
 			}, timeout, interval).Should(BeTrue())
 
 			networkConfig, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
@@ -133,12 +132,12 @@ var _ = Describe("SMF Operator", func() {
 		})
 
 		It("should maintain the active session table", func() {
-			retrieved1 := initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
-				labelCond{"state", "Ready"})
+			retrieved1 := initSessionContext(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"policy", "True"}, statusCond{"upf", "True"})
 			Expect(retrieved1).NotTo(BeNil())
 
-			retrieved2 := initSession(ctx, "user-2", "user-2", "guti-310-170-3F-152-2A-B7C8D9E1", 5,
-				labelCond{"state", "Ready"})
+			retrieved2 := initSessionContext(ctx, "user-2", "user-2", "guti-310-170-3F-152-2A-B7C8D9E1", 5,
+				statusCond{"policy", "True"}, statusCond{"upf", "True"})
 			Expect(retrieved2).NotTo(BeNil())
 
 			retrieved := object.NewViewObject("smf", "ActiveSessionTable")
@@ -158,66 +157,191 @@ var _ = Describe("SMF Operator", func() {
 				"name":      "user-1",
 				"namespace": "user-1",
 				"guti":      "guti-310-170-3F-152-2A-B7C8D9E0",
+				"idle":      false,
+				"sessionId": int64(5),
 			}))
 			Expect(flows).To(ContainElement(map[string]any{
 				"name":      "user-2",
 				"namespace": "user-2",
 				"guti":      "guti-310-170-3F-152-2A-B7C8D9E1",
+				"idle":      false,
+				"sessionId": int64(5),
 			}))
 
-			// // delete session-1
-			// retrieved1.SetLabels(map[string]string{"state": "Ready"})
-			// err = c.Delete(ctx, retrieved1)
-			// Expect(err).NotTo(HaveOccurred())
+			// delete session-1
+			err = c.Delete(ctx, retrieved1)
+			Expect(err).NotTo(HaveOccurred())
 
-			// retrieved = object.NewViewObject("smf", "ActiveSessionTable")
-			// object.SetName(retrieved, "", "active-sessions")
-			// Eventually(func() bool {
-			// 	if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
-			// 		return false
-			// 	}
-			// 	return len(retrieved.UnstructuredContent()["spec"].([]any)) != 0
-			// }, timeout, interval).Should(BeTrue())
+			retrieved = object.NewViewObject("smf", "ActiveSessionTable")
+			object.SetName(retrieved, "", "active-sessions")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				return len(retrieved.UnstructuredContent()["spec"].([]any)) == 2
+			}, timeout, interval).Should(BeTrue())
 
-			// sessions, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "spec")
-			// Expect(err).NotTo(HaveOccurred())
-			// Expect(ok).To(BeTrue())
-			// Expect(sessions).To(HaveLen(2)) // test session
-			// Expect(sessions).To(ContainElement(map[string]any{
-			// 	"name":      "user-2",
-			// 	"namespace": "user-2",
-			// 	"guti":      "guti-310-170-3F-152-2A-B7C8D9E1",
-			// }))
+			sessions, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "spec")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(sessions).To(HaveLen(2)) // test session
+			Expect(sessions).To(ContainElement(map[string]any{
+				"name":      "user-2",
+				"namespace": "user-2",
+				"guti":      "guti-310-170-3F-152-2A-B7C8D9E1",
+				"idle":      false,
+				"sessionId": int64(5),
+			}))
 
-			// // delete session-2
-			// err = c.Delete(ctx, retrieved2)
-			// Expect(err).NotTo(HaveOccurred())
+			// delete session-2
+			err = c.Delete(ctx, retrieved2)
+			Expect(err).NotTo(HaveOccurred())
 
-			// retrieved = object.NewViewObject("smf", "ActiveSessionTable")
-			// object.SetName(retrieved, "", "active-sessions")
-			// Eventually(func() bool {
-			// 	if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
-			// 		return false
-			// 	}
-			// 	return len(retrieved.UnstructuredContent()["spec"].([]any)) != 0
-			// }, timeout, interval).Should(BeTrue())
+			retrieved = object.NewViewObject("smf", "ActiveSessionTable")
+			object.SetName(retrieved, "", "active-sessions")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				return len(retrieved.UnstructuredContent()["spec"].([]any)) == 1
+			}, timeout, interval).Should(BeTrue())
 
-			// sessions, ok, err = unstructured.NestedSlice(retrieved.UnstructuredContent(), "spec")
-			// Expect(err).NotTo(HaveOccurred())
-			// Expect(ok).To(BeTrue())
-			// Expect(sessions).To(HaveLen(1)) // test session
+			sessions, ok, err = unstructured.NestedSlice(retrieved.UnstructuredContent(), "spec")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(sessions).To(HaveLen(1)) // test session
+		})
+	})
+
+	Context("When initiating an active->idle->active status transition", Ordered, Label("smf"), func() {
+		It("should let a session to be idled", func() {
+			retrieved := initSessionContext(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"validated", "True"}, statusCond{"policy", "True"}, statusCond{"upf", "True"})
+			Expect(retrieved).NotTo(BeNil())
+
+			retrieved = object.NewViewObject("upf", "Config")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) == nil
+			}, timeout, interval).Should(BeTrue())
+
+			// idling
+			yamlData := `
+apiVersion: smf.view.dcontroller.io/v1alpha1
+kind: SessionContext
+metadata:
+  name: user-1
+  namespace: user-1
+spec:
+  idle: true`
+			patch := object.New()
+			err := yaml.Unmarshal([]byte(yamlData), &patch)
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonPatch, err := json.Marshal(object.DeepCopy(patch).UnstructuredContent())
+			Expect(err).NotTo(HaveOccurred())
+
+			// re-get the session context (currently it contains the Config)
+			retrieved = object.NewViewObject("smf", "SessionContext")
+			object.SetName(retrieved, "user-1", "user-1")
+			err = c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.Patch(ctx, retrieved, client.RawPatch(types.MergePatchType, jsonPatch))
+			Expect(err).NotTo(HaveOccurred())
+
+			// UPF config should go away
+			retrieved = object.NewViewObject("upf", "Config")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+				return apierrors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+
+			// SessionContext: UPF status should become false
+			retrieved = object.NewViewObject("smf", "SessionContext")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
+					"status", "conditions", "upf")
+				if err != nil || !ok {
+					return false
+				}
+				return ok && cs["status"] == "False"
+			}, timeout, interval).Should(BeTrue())
+
+			cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
+				"status", "conditions", "upf")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(cs["status"]).To(Equal("False"))
+			Expect(cs["reason"]).To(Equal("Idle"))
+
+			// redoing the patch should bring back the session from idle state
+			yamlData = `
+apiVersion: smf.view.dcontroller.io/v1alpha1
+kind: SessionContext
+metadata:
+  name: user-1
+  namespace: user-1
+spec:
+  idle: null`
+			patch = object.New()
+			err = yaml.Unmarshal([]byte(yamlData), &patch)
+			Expect(err).NotTo(HaveOccurred())
+
+			jsonPatch, err = json.Marshal(object.DeepCopy(patch).UnstructuredContent())
+			Expect(err).NotTo(HaveOccurred())
+
+			// re-get the session context (just to be on the safe side)
+			retrieved = object.NewViewObject("smf", "SessionContext")
+			object.SetName(retrieved, "user-1", "user-1")
+			err = c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.Patch(ctx, retrieved, client.RawPatch(types.MergePatchType, jsonPatch))
+			Expect(err).NotTo(HaveOccurred())
+
+			// SessionContext: UPF status should become false
+			retrieved = object.NewViewObject("smf", "SessionContext")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
+					"status", "conditions", "upf")
+				if err != nil || !ok {
+					return false
+				}
+				return ok && cs["status"] == "True"
+			}, timeout, interval).Should(BeTrue())
+
+			cs, ok, err = unstructured.NestedMap(retrieved.UnstructuredContent(),
+				"status", "conditions", "upf")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ok).To(BeTrue())
+			Expect(cs["status"]).To(Equal("True"))
+
+			// UPF config should re-appear
+			retrieved = object.NewViewObject("upf", "Config")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) == nil
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 })
 
-var sessionTemplate = `
+var sessionContextTemplate = `
 apiVersion: smf.view.dcontroller.io/v1alpha1
 kind: SessionContext
 metadata:
   name: %s
   namespace: %s
-  labels:
-    state: Validated
 spec:
   guti: %s
   nssai: eMBB
@@ -271,13 +395,17 @@ spec:
           - name: match-all
             direction: Bidirectional
             match:
-              type: MatchAll  # Special type for default rule`
+              type: MatchAll  # Special type for default rule
+status:
+  conditions:
+    validated:
+      status: "True"`
 
-func initSession(ctx context.Context, name, namespace, guti string, id int, conds ...labelCond) object.Object {
+func initSessionContext(ctx context.Context, name, namespace, guti string, id int, conds ...statusCond) object.Object {
 	GinkgoHelper()
 
 	// load reg 1
-	yamlData := fmt.Sprintf(sessionTemplate, name, namespace, guti, id)
+	yamlData := fmt.Sprintf(sessionContextTemplate, name, namespace, guti, id)
 	sess1 := object.New()
 	err := yaml.Unmarshal([]byte(yamlData), &sess1)
 	Expect(err).NotTo(HaveOccurred())
@@ -293,9 +421,17 @@ func initSession(ctx context.Context, name, namespace, guti string, id int, cond
 			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
 				return false
 			}
-			labels := retrieved.GetLabels()
+			cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
 			for _, c := range conds {
-				if len(labels) == 0 || labels[c.name] != c.value {
+				status, ok := cs[c.name]
+				if !ok {
+					return false
+				}
+				value, ok := status.(map[string]any)
+				if !ok || value["status"] != c.status {
 					return false
 				}
 			}

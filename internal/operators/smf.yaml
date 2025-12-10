@@ -8,7 +8,7 @@
 #    - Retrieves policy from PCF
 #    - Merges UE requests with network policy
 #      - May reduce requested bit rates
-#      - May reject certain QoS flows  
+#      - May reject certain QoS flows
 #    - Updates Session status with allocated resources
 #    - Allocates IP address
 #    - Configures UPF (N4 session establishment)
@@ -35,15 +35,13 @@ controllers:
           metadata:
             name: test-session
             namespace: test-session
-            labels:
-              state: "Validated"
           spec:
             guti: "test-guti-000000000000000"
             nssai: eMBB
             sessionId: 0
-            pduSessionType: IPv4  
-            sscMode: SSC1 
-            networkConfiguration: 
+            pduSessionType: IPv4
+            sscMode: SSC1
+            networkConfiguration:
               requests:
                 - type: IPConfiguration
                   addressFamily: IPv4  # Internet Protocol Control Protocol
@@ -54,6 +52,10 @@ controllers:
                 - name: best-effort-flow
                   fiveQI: BestEffort
               rules: [1,2]
+          status:
+            conditions:
+              validated:
+                status: "True"
     target:
       kind: SessionContext
 
@@ -62,17 +64,16 @@ controllers:
   # Session context controllers
   #
   ##############################
-  - name: session-context-policy
+  - name: session-context-handler
     sources:
       - kind: SessionContext
-        predicate: GenerationChanged
-        labelSelector:
-          matchLabels:
-            state: Validated
+        # predicate: GenerationChanged
       - apiGroup: pcf.view.dcontroller.io
         kind: PolicyTable
     pipeline:
       - "@join": true
+      - "@select":
+          "@eq": [$.SessionContext.status.conditions.validated.status, "True"]
       - "@project":
           metadata: $.SessionContext.metadata
           spec: $.SessionContext.spec
@@ -90,6 +91,7 @@ controllers:
             networkConfiguration: $.spec.networkConfiguration
             nssai: $.spec.nssai
             pduSessionType: $.spec.pduSessionType
+            idle: $.spec.idle
             qos:
               flows:
                 "@filter":
@@ -98,6 +100,7 @@ controllers:
                       - "@eq": [$$.fiveQI, BestEffort]
                   - $.spec.qos.flows
               rules: $.spec.qos.rules
+          status: $.status
       # map policies
       - "@project":
           metadata: $.metadata
@@ -106,9 +109,11 @@ controllers:
             sessionId: $.spec.sessionId
             sscMode: $.spec.sscMode
             guti: $.spec.guti
+            suci: $.spec.suci
             networkConfiguration: $.spec.networkConfiguration
             nssai: $.spec.nssai
             pduSessionType: $.spec.pduSessionType
+            idle: $.spec.idle
             qos:
               rules: $.spec.qos.rules
               flows:
@@ -119,33 +124,48 @@ controllers:
                         fiveQI: $$.fiveQI
                       - name: $$.name
                         fiveQI: $$.fiveQI
-                        bitRates: 
+                        bitRates:
                           uplinkBwKbps: { "@min": [$$.bitRates.uplinkBwKbps, $.policyTable.maxGuaranteeedDownlinkBwKbps] }
                           downlinkBwKbps: { "@min": [$$.bitRates.downlinkBwKbps, $.policyTable.maxGuaranteeedUplinkBwKbps] }
                   - $.spec.qos.flows
+          status: $.status
       # allocate IP address and DNS
       - "@project":
-          - "$.": $.
-          - "@cond":
+          metadata: $.metadata
+          status: $.status
+          spec: $.spec
+          status:
+            "@cond":
               - "@eq": [$.spec.pduSessionType, IPv4]
-              - $.metadata.labels.state: Ready
-                $.status.conditions.policy:
-                  status: "True"
-                  reason: PolicyApplied
-                  message: PCF policies merged
-                $.status.conditions.upf:
-                  status: "True"
-                  reason: UPFConfigured
-                  message: UPF configured
-                $.status.qos: $.spec.qos
-                $.status.networkConfiguration:
+              - conditions:
+                  policy:
+                    status: "True"
+                    reason: PolicyApplied
+                    message: PCF policies merged
+                  upf:
+                    "@cond":
+                      - "@not": {"@eq": [$.spec.idle, true]}
+                      - status: "True"
+                        reason: UPFConfigured
+                        message: UPF configured
+                      - status: "False"
+                        reason: Idle
+                        message: "Session idle state requested: UPF configuration removed"
+                  validated: $.status.conditions.validated
+                guti: $.status.guti
+                suci: $.status.suci
+                qos: $.spec.qos
+                networkConfiguration:
                   ipConfiguration:
                     "@cond":
                       - "@eq": [ "$.spec.networkConfiguration.requests[?(@.type == 'IPConfiguration')].addressFamily", IPv4 ]
                       - ipAddress:
-                          "@concat":
-                            - "10.45.0."
-                            - "@rnd": [2, 255]
+                          "@cond":
+                            - "@exists": $.status.networkConfiguration.ipConfiguration.ipAddress
+                            - $.status.networkConfiguration.ipConfiguration.ipAddress
+                            - "@concat":
+                                - "10.45.0."
+                                - "@rnd": [2, 255]
                         subnetMask: "255.255.0.0"
                         defaultGateway: "10.45.0.1"
                         mtu: 1500
@@ -154,21 +174,27 @@ controllers:
                       - "@eq": [ "$.spec.networkConfiguration.requests[?(@.type == 'DNSServer')].addressFamily", IPv4 ]
                       - primaryDNS: "8.8.8.8"
                         secondaryDNS: "8.8.4.4"
-              - $.metadata.labels.state: Rejected
-                $.status.conditions.policy:
-                  status: "False"
-                  reason: AddressFamilyNotSupported
-                  message: Only IPv4 address policy is supported
+              - conditions:
+                  policy:
+                    status: "False"
+                    reason: AddressFamilyNotSupported
+                    message: Only IPv4 address policy is supported
+                  validated: $.status.conditions.validated
+                  upf: $.status.conditions.upf
+                  guti: $.status.guti
+                  suci: $.status.suci
     target:
       kind: SessionContext
 
   - name: upf-notifier
     sources:
       - kind: SessionContext
-        labelSelector:
-          matchLabels:
-            state: Ready
     pipeline:
+      - "@select":
+          "@and":
+            - "@eq": [$.status.conditions.validated.status, "True"]
+            - "@eq": [$.status.conditions.policy.status, "True"]
+            - "@eq": [$.status.conditions.upf.status, "True"]
       - "@project":
           metadata: $.metadata
           spec:
@@ -181,10 +207,11 @@ controllers:
   - name: active-session
     sources:
       - kind: SessionContext
-        labelSelector:
-          matchLabels:
-            state: Ready
     pipeline:
+      - "@select":
+          "@and":
+            - "@eq": [$.status.conditions.validated.status, "True"]
+            - "@eq": [$.status.conditions.policy.status, "True"]
       - "@project":
           type: SessionContext
           metadata: $.metadata
@@ -192,6 +219,8 @@ controllers:
             name: $.metadata.name
             namespace: $.metadata.namespace
             guti: $.spec.guti
+            idle: {"@exists": $.spec.idle}
+            sessionId: $.spec.sessionId
       - "@gather":
           - $.type
           - $.spec
@@ -201,4 +230,3 @@ controllers:
           spec: $.spec
     target:
       kind: ActiveSessionTable
-      

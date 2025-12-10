@@ -35,6 +35,7 @@ var _ = Describe("AMF Operator", func() {
 			{Name: "ausf", File: "ausf.yaml"},
 			{Name: "smf", File: "smf.yaml"},
 			{Name: "pcf", File: "pcf.yaml"},
+			// UDM is manual
 		}, 0, logger)
 		Expect(err).NotTo(HaveOccurred())
 		op = d.GetOperator("amf")
@@ -175,7 +176,7 @@ spec:
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Validated"))
 			Expect(cond["status"]).To(Equal("False"))
-			Expect(cond["reason"]).To(Equal("InvalidRegistrationType"))
+			Expect(cond["reason"]).To(Equal("InvalidType"))
 		})
 
 		It("should reject a registration with invalid standard", func() {
@@ -306,13 +307,13 @@ spec:
 			cond = findCondition(conds, "Validated")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Validated"))
-			Expect(cond["status"]).To(Equal("True"))
+			Expect(cond["status"]).To(Equal("False"))
+			Expect(cond["reason"]).To(Equal("SuciNotFound"))
 
 			cond = findCondition(conds, "Authenticated")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Authenticated"))
-			Expect(cond["status"]).To(Equal("False"))
-			Expect(cond["reason"]).To(Equal("MobileIdentityNotProvided"))
+			Expect(cond["status"]).To(Equal("Unknown"))
 		})
 
 		It("should reject a registration with an unsupported cypher", func() {
@@ -381,13 +382,13 @@ spec:
 			cond = findCondition(conds, "Validated")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Validated"))
-			Expect(cond["status"]).To(Equal("True"))
+			Expect(cond["status"]).To(Equal("False"))
+			Expect(cond["reason"]).To(Equal("EncyptionNotSupported"))
 
 			cond = findCondition(conds, "Authenticated")
 			Expect(cond).NotTo(BeNil())
 			Expect(cond["type"]).To(Equal("Authenticated"))
-			Expect(cond["status"]).To(Equal("False"))
-			Expect(cond["reason"]).To(Equal("EncyptionNotSupported"))
+			Expect(cond["status"]).To(Equal("Unknown"))
 		})
 
 		It("should reject an unknown user", func() {
@@ -645,87 +646,9 @@ spec:
 				statusCond{"Ready", "True"})
 			Expect(retrieved).NotTo(BeNil())
 
-			// create session
-			yamlData := `
-apiVersion: amf.view.dcontroller.io/v1alpha1
-kind: Session
-metadata:
-  name: user-1
-  namespace: user-1
-spec:
-  nssai: eMBB
-  guti: "guti-310-170-3F-152-2A-B7C8D9E0"
-  sessionId: 5
-  pduSessionType: IPv4
-  sscMode: SSC1
-  networkConfiguration:
-    requests:
-      - type: IPConfiguration
-        addressFamily: IPv4  # Internet Protocol Control Protocol
-      - type: DNSServer
-        addressFamily: IPv4
-  qos:
-    flows:
-      - name: voice-flow
-        fiveQI: ConversationalVoice  # Maps to standardized 5QI=1
-        bitRates:
-          uplinkBwKbps: 256
-          downlinkBwKbps: 256
-      - name: best-effort-flow
-        fiveQI: BestEffort
-      - name: dummy-flow
-        fiveQI: Dummy
-    rules:
-      - name: voice-rule
-        precedence: 10
-        default: false
-        qosFlow: voice-flow
-        filters:
-          - name: sip-signaling
-            direction: Bidirectional
-            match:
-              type: IPFilter
-              parameters:
-                protocol: UDP
-                destinationPort: 5060
-          - name: rtp-voice
-            direction: Bidirectional
-            match:
-              type: IPFilter
-              parameters:
-                protocol: UDP
-                destinationPortRange:
-                  start: 16384
-                  end: 32767
-      - name: default-rule
-        precedence: 255
-        default: true
-        qosFlow: best-effort-flow
-        filters:
-          - name: match-all
-            direction: Bidirectional
-            match:
-              type: MatchAll  # Special type for default rule`
-			session := object.New()
-			err := yaml.Unmarshal([]byte(yamlData), &session)
-			Expect(err).NotTo(HaveOccurred())
-
-			err = c.Create(ctx, session)
-			Expect(err).NotTo(HaveOccurred())
-
-			retrieved = object.NewViewObject("smf", "SessionContext")
-			object.SetName(retrieved, "user-1", "user-1")
-			Eventually(func() bool {
-				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
-					return false
-				}
-				cs, ok, err := unstructured.NestedMap(retrieved.UnstructuredContent(),
-					"status", "conditions", "validated")
-				if err != nil || !ok {
-					return false
-				}
-				return cs["status"] == "True"
-			}, timeout, interval).Should(BeTrue())
+			retrieved = initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"Ready", "True"})
+			Expect(retrieved).NotTo(BeNil())
 
 			// wait until we get an object with nonzero status
 			retrieved = object.NewViewObject("amf", "Session")
@@ -1063,6 +986,144 @@ spec:
 			Expect(cond["status"]).To(Equal("Unknown"))
 		})
 	})
+
+	Context("When initiating an active->idle state transition", Ordered, Label("amf"), func() {
+		It("should deactive an active session", func() {
+			retrieved := initReg(ctx, "user-1", "user-1", "suci-0-999-01-02-4f2a7b9c8d13e7a5c0",
+				statusCond{"Ready", "True"})
+			Expect(retrieved).NotTo(BeNil())
+
+			retrieved = initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"Ready", "True"})
+			Expect(retrieved).NotTo(BeNil())
+
+			// we should have a valid UPF Configuration
+			retrieved = object.NewViewObject("upf", "Config")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) == nil
+			}, timeout, interval).Should(BeTrue())
+
+			yamlData := `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: ContextRelease
+metadata:
+  name: user-1
+  namespace: user-1
+spec:
+  guti: "guti-310-170-3F-152-2A-B7C8D9E0"
+  sessionId: 5`
+			session := object.New()
+			err := yaml.Unmarshal([]byte(yamlData), &session)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.Create(ctx, session)
+			Expect(err).NotTo(HaveOccurred())
+
+			// wait until we get a nonempty status in the context-release
+			retrieved = object.NewViewObject("amf", "ContextRelease")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+				if err != nil || !ok {
+					return false
+				}
+				r := findCondition(cs, "Ready")
+				return r != nil && r["status"] == "True"
+			}, timeout, interval).Should(BeTrue())
+
+			// check status
+			status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			conds, ok := status["conditions"].([]any)
+			Expect(ok).To(BeTrue())
+			Expect(conds).NotTo(BeEmpty())
+
+			cond := findCondition(conds, "Ready")
+			Expect(cond).NotTo(BeNil())
+			Expect(cond["type"]).To(Equal("Ready"))
+			Expect(cond["status"]).To(Equal("True"))
+
+			// wait until we get session with Idle status
+			retrieved = object.NewViewObject("amf", "Session")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+				if err != nil || !ok {
+					return false
+				}
+				r := findCondition(cs, "UPFConfigured")
+				return r != nil && r["status"] == "False" && r["reason"] == "Idle"
+			}, timeout, interval).Should(BeTrue())
+
+			// we shouldn't see a valid UPF Configuration
+			retrieved = object.NewViewObject("upf", "Config")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				return c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved) != nil
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should reject a deactivation request for an unknown registration", func() {
+			retrieved := initReg(ctx, "user-1", "user-1", "suci-0-999-01-02-4f2a7b9c8d13e7a5c0",
+				statusCond{"Ready", "True"})
+			Expect(retrieved).NotTo(BeNil())
+
+			retrieved = initSession(ctx, "user-1", "user-1", "guti-310-170-3F-152-2A-B7C8D9E0", 5,
+				statusCond{"Ready", "True"})
+			Expect(retrieved).NotTo(BeNil())
+
+			yamlData := `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: ContextRelease
+metadata:
+  name: user-1
+  namespace: user-1
+spec:
+  guti: dummy
+  sessionId: 5`
+			session := object.New()
+			err := yaml.Unmarshal([]byte(yamlData), &session)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = c.Create(ctx, session)
+			Expect(err).NotTo(HaveOccurred())
+
+			// wait until we get a nonempty status in the context-release
+			retrieved = object.NewViewObject("amf", "ContextRelease")
+			object.SetName(retrieved, "user-1", "user-1")
+			Eventually(func() bool {
+				if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+					return false
+				}
+				cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+				if err != nil || !ok {
+					return false
+				}
+				r := findCondition(cs, "Ready")
+				return r != nil && r["status"] == "False"
+			}, timeout, interval).Should(BeTrue())
+
+			// check status
+			status, ok := retrieved.UnstructuredContent()["status"].(map[string]any)
+			Expect(ok).To(BeTrue())
+			conds, ok := status["conditions"].([]any)
+			Expect(ok).To(BeTrue())
+			Expect(conds).NotTo(BeEmpty())
+
+			cond := findCondition(conds, "Ready")
+			Expect(cond).NotTo(BeNil())
+			Expect(cond["type"]).To(Equal("Ready"))
+			Expect(cond["status"]).To(Equal("False"))
+			Expect(cond["reason"]).To(Equal("GutiNotFound"))
+		})
+	})
 })
 
 var regTemplate = `
@@ -1107,6 +1168,104 @@ func initReg(ctx context.Context, name, namespace, suci string, conds ...statusC
 	if len(conds) != 0 {
 		// wait until we get an object with readystatus
 		retrieved := object.NewViewObject("amf", "Registration")
+		object.SetName(retrieved, namespace, name)
+		Eventually(func() bool {
+			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
+				return false
+			}
+			cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+			if err != nil || !ok {
+				return false
+			}
+			for _, c := range conds {
+				r := findCondition(cs, c.name)
+				if r == nil || r["status"] != c.status {
+					return false
+				}
+			}
+			return true
+		}, timeout, interval).Should(BeTrue())
+		return retrieved
+	}
+	return nil
+}
+
+var sessionTemplate = `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: Session
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  nssai: eMBB
+  guti: %s
+  sessionId: %d
+  pduSessionType: IPv4
+  sscMode: SSC1
+  networkConfiguration:
+    requests:
+      - type: IPConfiguration
+        addressFamily: IPv4  # Internet Protocol Control Protocol
+      - type: DNSServer
+        addressFamily: IPv4
+  qos:
+    flows:
+      - name: voice-flow
+        fiveQI: ConversationalVoice  # Maps to standardized 5QI=1
+        bitRates:
+          uplinkBwKbps: 256
+          downlinkBwKbps: 256
+      - name: best-effort-flow
+        fiveQI: BestEffort
+      - name: dummy-flow
+        fiveQI: Dummy
+    rules:
+      - name: voice-rule
+        precedence: 10
+        default: false
+        qosFlow: voice-flow
+        filters:
+          - name: sip-signaling
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              parameters:
+                protocol: UDP
+                destinationPort: 5060
+          - name: rtp-voice
+            direction: Bidirectional
+            match:
+              type: IPFilter
+              parameters:
+                protocol: UDP
+                destinationPortRange:
+                  start: 16384
+                  end: 32767
+      - name: default-rule
+        precedence: 255
+        default: true
+        qosFlow: best-effort-flow
+        filters:
+          - name: match-all
+            direction: Bidirectional
+            match:
+              type: MatchAll  # Special type for default rule`
+
+func initSession(ctx context.Context, name, namespace, guti string, id int, conds ...statusCond) object.Object {
+	GinkgoHelper()
+
+	// load reg 1
+	yamlData := fmt.Sprintf(sessionTemplate, name, namespace, guti, id)
+	sess1 := object.New()
+	err := yaml.Unmarshal([]byte(yamlData), &sess1)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = c.Create(ctx, sess1)
+	Expect(err).NotTo(HaveOccurred())
+
+	if len(conds) != 0 {
+		// wait until we get an object with readystatus
+		retrieved := object.NewViewObject("amf", "Session")
 		object.SetName(retrieved, namespace, name)
 		Eventually(func() bool {
 			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err != nil {
