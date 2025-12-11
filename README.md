@@ -698,9 +698,9 @@ Make sure a registration and a session exists for the `user-1` and the full user
      reason: Ready
      status: "True"
      type: Ready
-  ```
+   ```
 
-  Meanwhile, the watch should dump a new line `user-1-1`, indicating that the UPF config for the `user-1-1` session has changed. Listing the actual UPF config will show that the config has gone.
+   Meanwhile, the watch should dump a new line `user-1-1`, indicating that the UPF config for the `user-1-1` session has changed. Listing the actual UPF config will show that the config has gone.
 
    ```bash
    $ kubectl get config.upf -n user-1 user-1-1
