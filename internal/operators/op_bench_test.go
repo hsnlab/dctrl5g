@@ -577,6 +577,80 @@ func BenchmarkSessionMemoryGrowth(b *testing.B) {
 		float64(int64(afterCleanup)-int64(baselineHeap))/(1024*1024))
 }
 
+// BenchmarkSessionParallel benchmarks the session establishment process with parallel
+// goroutines to test concurrent session handling.
+func BenchmarkSessionParallel(b *testing.B) {
+	// Setup
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	initBenchSuite(b, ctx)
+
+	// Counter for unique session IDs across all parallel goroutines.
+	var sessionCounter int
+
+	// Reset timer to exclude setup time.
+	b.ResetTimer()
+
+	// Run benchmark in parallel.
+	b.RunParallel(func(pb *testing.PB) {
+		var localRegs []object.Object
+		var localSessions []object.Object
+
+		for pb.Next() {
+			// Generate unique ID using counter.
+			sessionCounter++
+			i := sessionCounter
+
+			// Create unique name and namespace for each session.
+			// Reuse the same SUCI as uniqueness is not checked.
+			name := fmt.Sprintf("bench-session-parallel-user-%d", i)
+			namespace := name
+			suci := "suci-0-999-01-02-4f2a7b9c8d13e7a5c0"
+
+			// First create a registration.
+			reg, err := initRegErr(ctx, name, namespace, suci, statusCond{"Ready", "True"})
+			if err != nil {
+				b.Fatalf("failed to initialize registration %d: %v", i, err)
+			}
+			localRegs = append(localRegs, reg)
+
+			// Extract GUTI from the registration status.
+			status, ok := reg.UnstructuredContent()["status"].(map[string]any)
+			if !ok {
+				b.Fatalf("failed to get status from registration %d", i)
+			}
+			guti, ok := status["guti"].(string)
+			if !ok {
+				b.Fatalf("failed to get GUTI from registration %d", i)
+			}
+
+			// Create session.
+			session, err := initSessionErr(ctx, name, namespace, guti, i, statusCond{"Ready", "True"})
+			if err != nil {
+				b.Fatalf("failed to initialize session %d: %v", i, err)
+			}
+			localSessions = append(localSessions, session)
+		}
+
+		// Cleanup local sessions first, then registrations.
+		for _, session := range localSessions {
+			if err := c.Delete(ctx, session); err != nil && !apierrors.IsNotFound(err) {
+				b.Logf("warning: failed to delete session %s/%s: %v",
+					session.GetNamespace(), session.GetName(), err)
+			}
+		}
+		for _, reg := range localRegs {
+			if err := c.Delete(ctx, reg); err != nil && !apierrors.IsNotFound(err) {
+				b.Logf("warning: failed to delete registration %s/%s: %v",
+					reg.GetNamespace(), reg.GetName(), err)
+			}
+		}
+	})
+
+	b.StopTimer()
+}
+
 // BenchmarkTransition benchmarks the active->idle->active transition process.
 // Creates a single registration+session pair, then repeatedly performs the transition cycle.
 func BenchmarkTransition(b *testing.B) {
