@@ -6,34 +6,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/l7mp/dcontroller/pkg/object"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"go.uber.org/zap/zapcore"
+	"github.com/go-logr/logr"
+	"github.com/l7mp/dcontroller/pkg/object"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/yaml"
 )
 
 const (
-	timeout       = time.Second * 5
-	interval      = time.Millisecond * 50
 	retryInterval = time.Millisecond * 100
 )
 
 var (
 	// loglevel = -10
 	loglevel = -1
-	logger   = zap.New(zap.UseFlagOptions(&zap.Options{
-		Development:     true,
-		DestWriter:      GinkgoWriter,
-		StacktraceLevel: zapcore.Level(3),
-		TimeEncoder:     zapcore.RFC3339NanoTimeEncoder,
-		Level:           zapcore.Level(loglevel),
-	}))
-	c client.WithWatch
+	timeout  = time.Second * 5
+	interval = time.Millisecond * 50
+	logger   logr.Logger
+	c        client.WithWatch
 )
 
 type statusCond struct{ name, status string }
@@ -394,6 +387,78 @@ func initSessionContextErr(ctx context.Context, name, namespace, guti string, id
 						}
 						value, ok := status.(map[string]any)
 						if !ok || value["status"] != c.status {
+							allCondsMet = false
+							break
+						}
+					}
+					if allCondsMet {
+						return retrieved, nil
+					}
+				}
+			}
+		}
+	}
+}
+
+// contextReleaseTemplate is a template for creating context release requests.
+var contextReleaseTemplate = `
+apiVersion: amf.view.dcontroller.io/v1alpha1
+kind: ContextRelease
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  guti: %s
+  sessionId: %d`
+
+// initContextRelease creates a new context release request and waits until conditions are satisfied.
+func initContextRelease(ctx context.Context, name, namespace, guti string, sessionId int, conds ...statusCond) object.Object {
+	GinkgoHelper()
+
+	obj, err := initContextReleaseErr(ctx, name, namespace, guti, sessionId, conds...)
+	Expect(err).NotTo(HaveOccurred())
+	return obj
+}
+
+// initContextReleaseErr creates a new context release request and waits until conditions are satisfied.
+// Returns an error instead of using Ginkgo/Gomega assertions for use in benchmarks.
+func initContextReleaseErr(ctx context.Context, name, namespace, guti string, sessionId int, conds ...statusCond) (object.Object, error) {
+	yamlData := fmt.Sprintf(contextReleaseTemplate, name, namespace, guti, sessionId)
+	ctxRel := object.New()
+	if err := yaml.Unmarshal([]byte(yamlData), &ctxRel); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal context release YAML: %w", err)
+	}
+
+	if err := c.Create(ctx, ctxRel); err != nil {
+		return nil, fmt.Errorf("failed to create context release: %w", err)
+	}
+
+	if len(conds) == 0 {
+		return nil, nil
+	}
+
+	// wait until we get an object with ready status.
+	retrieved := object.NewViewObject("amf", "ContextRelease")
+	object.SetName(retrieved, namespace, name)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+
+	for {
+		select {
+		case <-timeoutTimer.C:
+			return nil, fmt.Errorf("timeout waiting for context release conditions")
+		case <-ticker.C:
+			if err := c.Get(ctx, client.ObjectKeyFromObject(retrieved), retrieved); err == nil {
+				cs, ok, err := unstructured.NestedSlice(retrieved.UnstructuredContent(), "status", "conditions")
+				if err == nil && ok {
+					allCondsMet := true
+					for _, c := range conds {
+						r := findCondition(cs, c.name)
+						if r == nil || r["status"] != c.status {
 							allCondsMet = false
 							break
 						}

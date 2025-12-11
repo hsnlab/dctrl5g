@@ -151,7 +151,7 @@ sequenceDiagram
 ```
 
 The AMF control loops are as follows:
-1. Control loop `register-input`. Purpose: validate AMF:Registration and write to internal state. Watches: AMF:Registration. Predicates: `GenerationChanged`. Writes to AMF:RegState (internal registration state).
+1. **Control loop** `register-input`. **Purpose:** validate AMF:Registration and write to internal state. **Watches:** AMF:Registration. **Predicates:** `GenerationChanged`. **Writes:** AMF:RegState (internal registration state).
    1. Create an empty AMF:RegState resource
    2. Initialize status fields.
    3. Check registration type. If not `initial`, set `Validated` status to `False` with reason `InvalidType`.
@@ -160,39 +160,39 @@ The AMF control loops are as follows:
    6. Check UE security capability. If the encryption algorithms list does not contain `5G-EA2` or the integrity algorithms list does not contain `5G-IA2`, set `Validated` status to `False` with reason `EncyptionNotSupported`.
    7. Otherwise set `Validated` status to `True` with reason `Validated`.
    8. Write AMF:RegState.
-2. Control loop `register-identity-req`. Purpose: generate mobile identity requests for the AUSF. Watches: AMF:RegState. Predicates: runs only if the `Validated` status is `True`. Writes to: AUSF:MobileIdentity.
+2. **Control loop** `register-identity-req`. **Purpose:** generate mobile identity requests for the AUSF. **Watches:** AMF:RegState. **Predicates:** runs only if the `Validated` status is `True`. **Writes:**: AUSF:MobileIdentity.
    1. Create an empty AUSF:MobileIdentity resource.
    2. Set the SUCI in the spec.
    3. Send to the AUSF.
-3. Control loop `register-identity-handler`. Purpose: handle mobile identity responses from the AUSF. Watches: AMF:RegState and AUSF:MobileIdentity. Predicates: runs only if AMF:RegState `Validated` status is `True` and the MobileIdeintity is labeled `state:Ready`. Writes to: AMF:RegState.
+3. **Control loop** `register-identity-handler`. **Purpose:** handle mobile identity responses from the AUSF. **Watches:** AMF:RegState and AUSF:MobileIdentity. **Predicates:** runs only if AMF:RegState `Validated` status is `True` and the MobileIdeintity is labeled `state:Ready`. **Writes:**: AMF:RegState.
    1. Join on metadata.
    2. Check is AUSF:MobileIdentity `Reeady` status is true. If not, set the `Authenticated` status to `False` with reason `SupiNotFound`.
    3. Genetate a GUTI based on the SUPI returned by the AUSF and add to the status.
    4. Set the AMF:RegState `Authenticated` status to `True` with reason `AuthenticationSuccess`.
    5. Write AMF:RegState.
-4. Control loop `register-config-req`. Purpose: generate a config request to the UDM in order to obtain a secure context for the UE. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `Authenticated` status is `True`. Writes to: UDM:Config.
+4. **Control loop** `register-config-req`. **Purpose:** generate a config request to the UDM in order to obtain a secure context for the UE. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes:**: UDM:Config.
    1. Create an empty UDM:Config resource
    2. Set metadata.
    3. Send to the UDM.
-5. Control loop `register-config-handler`. Purpose: handle configs from the UDM. Watches: AMF:RegState and UDM:Config. Predicates: runs only if AMF:RegState `Authenticated` status is `True`. Writes to: AMF:RegState.
+5. **Control loop** `register-config-handler`. **Purpose:** handle configs from the UDM. **Watches:** AMF:RegState and UDM:Config. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes:**: AMF:RegState.
    1. Join on metadata.
    2. Check is UDM:Config `Reeady` status is true. If not, set the `SubscriptionInfoFound` status to `False` with reason `ConfigNotFound`.
    3. Otherwise add the config returned by the UDM to the status and the `SubscriptionInfoFound` status to `True` with reason `ConfigReady`.
    4. Write to AMF:RegState.
-6. Control loop `register-output`. Purpose: write state maintained in the internal AMF:RegState back into the user-visible AMF:Registration resources. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `SubscriptionInfoFound` status is `True`. Writes to: AMF:Registration.
+6. **Control loop** `register-output`. **Purpose:** write state maintained in the internal AMF:RegState back into the user-visible AMF:Registration resources. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `SubscriptionInfoFound` status is `True`. **Writes:**: AMF:Registration.
    1. If each of the `Validated`, `Authenticated`, and `SubscriptionInfoFound` status is `True`, set the `Ready` status to `True` with reason `RegistrationSuccessful`. Otherwise set the `Ready` status to `False` with reason `RegistrationFailed`.
    2. Copy the `Validated` status from the internal state to the AMF:Registration resource status conditions.
    3. Copy the `Authenticated` status from the internal state to the AMF:Registration resource status conditions.
    4. Copy the `SubscriptionInfoFound` status from the internal state to the AMF:Registration resource status conditions.
    5. Copy the rest of the status fields from the AMF:RegState into the AMF:Registration status.
    6. Write to AMF:Registration.
-7. Control loop `active-registration`. Purpose: maintain the `active-registration` table at the AMF. Watches: AMF:RegState. Predicates: runs only if AMF:RegState `Ready` status is `True`. Writes to: AMF:ActiveRegistrationTable.
+7. **Control loop** `active-registration`. **Purpose:** maintain the `active-registration` table at the AMF. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Ready` status is `True`. **Writes:**: AMF:ActiveRegistrationTable.
    1. Create an empty AMF:ActiveRegistrationTable resource.
    2. Gather the name, namespace, GUTI and SUCI from all AMF:RegState resources into a list.
    3. Write registration list into the AMF:ActiveRegistrationTable.
 
 The AUSF control loops are as follows:
-1. Control loop `supi-req-handler`. Purpose: look up the SUPI based on the SUCI. Watches: AUSF:MobileIdentity. Predicates: `GenerationChanged`. Writes to: AUSF:MobileIdentity.
+1. **Control loop** `supi-req-handler`. **Purpose:** look up the SUPI based on the SUCI. **Watches:** AUSF:MobileIdentity. **Predicates:** `GenerationChanged`. **Writes:**: AUSF:MobileIdentity.
    1. Look up the SUPI based on the SUCI in the request. If successful, set the `Ready` status to `True` with reason `Ready`, otherwise set `Ready` to `False` with reason `MobileIdentityNotFound`.
    2. Set the label `state:Ready`
    3. Write status back to AUSF:MobileIdentity.
@@ -480,7 +480,7 @@ sequenceDiagram
 ```
 
 The AMF control loops are as follows:
-1. Control loop `session-input`. Purpose: validate AMF:Session resources and write internal state. Watches: AMF:Session. Predicates: `GenerationChanged`. Writes to SMF:SessionContext (SMF internal session state).
+1. **Control loop** `session-input`. **Purpose:** validate AMF:Session resources and write internal state. **Watches:** AMF:Session. **Predicates:** `GenerationChanged`. **Writes:** SMF:SessionContext (SMF internal session state).
    1. Create an empty SMF:SessionContext resource
    2. Initialize status fields.
    3. Check if network configuration request, QoS flows and QoS rules are present in the spec. If not, set `Validated` status to `False` with reason `InvalidSession`.
@@ -491,7 +491,7 @@ The AMF control loops are as follows:
    8. Otherwise set the `Validated` status to `True` with reason `Validated`.
    9. Set the GUTI, SUPI and SUCI in the status
    10. Write to the SMF:SessionContext resource
-2. Control loop `session-output`. Purpose: write state maintained in the internal SMF:SessionContext back into the user-visible AMF:Session resource. Watches: AMF:SessionContext. Predicates: none. Writes to: AMF:Session.
+2. **Control loop** `session-output`. **Purpose:** write state maintained in the internal SMF:SessionContext back into the user-visible AMF:Session resource. **Watches:** AMF:SessionContext. **Predicates:** none. **Writes:**: AMF:Session.
    1. If each of the `Validated`, `PolicyApplied`, and `UPFConfigured` status is `True`, set the `Ready` status to `True` with reason `SessionSuccessful`. Otherwise set the `Ready` status to `False` with reason `SessionFailed`.
    2. Copy the `Validated` status from the internal state to the AMF:Session resource status conditions.
    3. Copy the `PolicyApplied` status from the internal state to the AMF:Session resource status conditions.
@@ -500,7 +500,7 @@ The AMF control loops are as follows:
    4. Write to AMF:Session.
 
 The SMF control loops are as follows:
-1. Control loop `session-context-handler`. Purpose: query the PCF and apply the returned policies to the session spec. Watches: SMF:SessionContext. Predicates: none. Writes to SMF:SessionContext.
+1. **Control loop** `session-context-handler`. **Purpose:** query the PCF and apply the returned policies to the session spec. **Watches:** SMF:SessionContext. **Predicates:** none. **Writes:** SMF:SessionContext.
    1. Obtain session policies from the PCF
    2. Process QoS flows through the session policies; currently filters for `ConversationalVoice` and `BestEffort` 5QI (5G Quality of Service Identifier).
    3. Process QoS bitrates through the session policies; cap uplink/downlink bitrates at the values provided by the PCF.
@@ -509,18 +509,18 @@ The SMF control loops are as follows:
    6. Check if an DNS configuration is requested. If yes, set primary and secondary DNS server address.
    7. Check if IDLE state is request. If no, set status `UPFConfigured` to `True` with reason `UPFConfigured`, otherwise set `UPFConfigured` to `False` with reason `Idle`
    8. Write SMF:SessionContext
-2. Control loop `upf-notifier`. Purpose: set session traffic spec in the UPF:Config. Watches: SMF:SessionContext. Predicates: runs only if SMF:SessionContext `Ready` status is `True`. Writes to UPF:Config.
+2. **Control loop** `upf-notifier`. **Purpose:** set session traffic spec in the UPF:Config. **Watches:** SMF:SessionContext. **Predicates:** runs only if SMF:SessionContext `Ready` status is `True`. **Writes:** UPF:Config.
    1. Create an empty UPF:Config resource
    2. Copy traffic spec from the SMF:SessionContext to the UPF:Concig
    3. Send UPF:Concig
-3. Control loop `active-session`. Purpose: maintain the `active-session` table at the SMF. Watches: SMF:SessionContext. Predicates: runs only if SMF:SessionContext `Validated` and `PolicyApplied` status is `True`. Writes to: SMF:ActiveSessionTable.
+3. **Control loop** `active-session`. **Purpose:** maintain the `active-session` table at the SMF. **Watches:** SMF:SessionContext. **Predicates:** runs only if SMF:SessionContext `Validated` and `PolicyApplied` status is `True`. **Writes:**: SMF:ActiveSessionTable.
    1. Create an empty SMF:ActiveSessionTable resource.
    2. Gather the name, namespace, GUTI and session id from all SMF:SessionContext resources into a list.
    3. Add the idle status in each list member
    4. Write session list into the SMF:ActiveSessionTable.
    
 The UPF control loops are as follows:
-1. Control loop `active-config`. Purpose: maintain the `active-config` table at the UPF. Watches: UPF:Config. Predicates: none. Writes to: UPF:ActiveConfigTable.
+1. **Control loop** `active-config`. **Purpose:** maintain the `active-config` table at the UPF. **Watches:** UPF:Config. **Predicates:** none. **Writes:**: UPF:ActiveConfigTable.
    1. Create an empty UPF:ActiveConfigTable resource.
    2. Gather the name, namespace, and traffic spec per each UPF:Config resources into a list.
    4. Write config list into the UPF:ActiveConfigTable resource.
@@ -635,7 +635,7 @@ status:
     type: Ready
 ```
 
-### Control loops
+### **Control loop**s
 
 ContextRelease resources are first processed by the AMF (Access and Mobility Management Function). Later steps involve the SMF (Session Management Function)and the UPF (User Plane Function) function.
 
@@ -662,13 +662,13 @@ sequenceDiagram
 ```
 
 The AMF control loops are as follows:
-1. Control loop `session-context-release-input`. Purpose: validate AMF:ContextRelease resource. Watches: AMF:ContextRelease. Predicates: `GenerationChanged`. Writes status to AMF:ContextRelease.
+1. **Control loop** `session-context-release-input`. **Purpose:** validate AMF:ContextRelease resource. **Watches:** AMF:ContextRelease. **Predicates:** `GenerationChanged`. Writes status to AMF:ContextRelease.
    1. Check if GUTI is present in the spec. If not, set `Ready` status to `False` with reason `GutiNotSpecified`
    2. Check if the active-registration table contains the GUTI. If not, set `Ready` status to `False` with reason `GutiNotFound`.
    3. Check if the active-session table contains the session id and the GUTI. If not, set `Ready` status to `False` with reason `SessionNotFound`.
    4. Otherwise, set `Ready` status to `True` with reason `Ready`.
    5. Update the AMF:ContextRelease status.
-2. Control loop `session-context-release-output`. Purpose: notify the UPF. Watches: AMF:ContextRelease. Predicates: runs only if `Ready` status is `True`. Writes to SMF:SessionContext (SMF internal session state).
+2. **Control loop** `session-context-release-output`. **Purpose:** notify the UPF. **Watches:** AMF:ContextRelease. **Predicates:** runs only if `Ready` status is `True`. **Writes:** SMF:SessionContext (SMF internal session state).
    1. Create an empty SMF:SessionContext patch.
    2. Set metadata
    3. Set `spec.idle` to `true`.
@@ -736,6 +736,197 @@ Make sure a registration and a session exists for the `user-1` and the full user
        flows: ...
        rules: ...
    ```
+
+## Benchmarking
+
+The project contains a comprehensive operator benchmark suite in `internal/operators` for testing the performance and resource use of the 5G operators. 
+
+For all benchmarked worflows there are multiple tests:
+- **Sequential benchmarks** perform the workflow sequentially and measures the time and memory allocations per iteration, and the CPU usage.
+- **Sequential benchmarks with memory statistics** also measure the detailed memory statistics including the total memory allocated, memory used per registration, heap allocation and GC statistics, an object allocation/deallocation counts. Note that memory profiling comes with nonzero overhead.
+- **Sequential benchmarks with memory growth statistics** also track memory growth over multiple iterations and detects memory leaks. Meanwhile it measures baseline heap memory, memory growth per registration, and memory after cleanup (leak detection). Note that memory profiling comes with nonzero overhead.
+- **Parallel benchmarks** for the registration and the session establishment workflow run the tested workflows in parallel measure the time and memory allocations per iteration, and the CPU usage.
+
+To run all benchmarks:
+
+```bash
+$ go test -bench=. -benchmem -run=^$ -timeout=30m
+```
+
+CPU profiling:
+```bash
+$ go test -bench=BenchmarkRegistration$ -benchmem -run=^$ -cpuprofile=cpu.prof
+$ go tool pprof cpu.prof
+```
+
+Example output:
+```
+BenchmarkRegistration-4          2   75640243 ns/op  19857804 B/op  202407 allocs/op
+```
+
+This means:
+- `BenchmarkRegistration-4`: Benchmark name with 4 CPU cores
+- `2`: Number of iterations run
+- `75640243 ns/op`: ~75.6 milliseconds per operation
+- `19857804 B/op`: ~19.8 MB allocated per operation
+- `202407 allocs/op`: ~202k memory allocations per operation
+
+### Registration
+
+Tests the registration process by creating multiple UE registrations and waiting for each to complete with `Ready` status.
+
+#### Usage
+
+- Run sequential registration test with default iterations (auto-determined by Go):
+  ```bash
+  go test -bench=BenchmarkRegistration$ -benchmem -run=^$
+  ```
+- Run sequential registration test with specific iteration count:
+  ```bash
+  go test -bench=BenchmarkRegistration$ -benchtime=10x -benchmem -run=^$
+  ```
+- Run sequential registration test with minimum time duration:
+  ```bash
+  go test -bench=BenchmarkRegistration$ -benchtime=30s -benchmem -run=^$
+  ```
+- Run sequential registration test with memory statistics:
+  ```bash
+  $ go test -bench=BenchmarkRegistrationWithMemStats$ -benchtime=10x -run=^$
+  ```
+- Run sequential registration test with memory growth statistics:
+  ```bash
+  $ go test -bench=BenchmarkRegistrationMemoryGrowth$ -benchtime=20x -run=^$
+  ```
+- Run parallel registration test with default parallelism:
+  ```bash
+  $ go test -bench=BenchmarkRegistrationParallel$ -benchmem -run=^$
+  ```
+- Run parallel registration test with specific CPU count:
+  ```bash
+  $ go test -bench=BenchmarkRegistrationParallel$ -cpu=1,2,4,8 -benchmem -run=^$
+  ```
+
+### Results
+
+Estimated memory usage per registration:
+
+| Metric                            | Value      | Notes                          |
+|-----------------------------------|------------|--------------------------------|
+| **Per-operation allocation**      | ~14-20 MB  | From `-benchmem` flag          |
+| **Heap growth per registration**  | ~1.3 MB    | From runtime.MemStats tracking |
+| **Allocations per operation**     | ~170k-200k | Number of malloc calls         |
+| **Live objects per registration** | ~6.5k      | Objects not yet freed          |
+
+
+For production deployment planning:
+
+- Base operator overhead: ~20-30 MB
+- Per active registration: ~1-2 MB (persistent heap)
+- Per registration operation: ~15-20 MB (peak including GC)
+- Temporary allocations during operations: ~13-18 MB (gets GC'd)
+
+Example: For 1000 concurrent registrations:
+- Persistent memory: 20 MB + (1000 × 1.5 MB) = ~1.5 GB
+- Peak during burst: Add 20-50 MB per concurrent operation
+
+### Session establishment
+
+Another set of benchmarks test the session establishment. Note that for all sessions the tests first create a registration, extract the GUTI, and then use that to establish the session. The tests holds on to the objects created until the end of the benchmarks. Finally registrations and sessions are cleaned up.
+
+#### Usage
+
+- Run the sequential session establishment benchmark with default iterations:
+  ```bash
+  $ go test -bench=BenchmarkSession$ -benchmem -run=^$
+  ```
+- Run the sequential session establishment benchmark with specific iteration count:
+  ```bash
+  $ go test -bench=BenchmarkSession$ -benchtime=5x -benchmem -run=^$
+  ```
+- Run sequential session establishment benchmark with memory statistics:
+  ```bash
+  $  go test -bench=BenchmarkSessionWithMemStats$ -benchtime=5x -run=^$
+  ```
+- Run sequential session establishment benchmark with memory growth statistics:
+  ```bash
+  $ go test -bench=BenchmarkSessionMemoryGrowth -benchtime=5x -run=^$
+  ```
+  ```bash
+  $ go test -bench=BenchmarkSessionParallel$ -benchmem -run=^$
+  ```
+- Run parallel registration test with specific CPU count:
+  ```bash
+  $ go test -bench=BenchmarkSessionParallel$ -cpu=1,2,4,8 -benchmem -run=^$
+  ```
+
+### Results
+
+Estimated memory usage per registration:
+
+### Active-idle-active transition
+
+The benchmarks test the time and memory needed for active-idle transition. Note that for all tests a single pair of registration and session is created and then in each iteration a state transition is first requested by creating an AMF:ContextRelease, the test then checks if the UPF:Config is gone, the AMF:ContextRelease is then deleted to initiate the reverse transition and finally the test waits until the UPF:Config reappears. Finally the registration and the session is cleaned up.
+
+#### Usage
+
+- Run the state transition benchmark with default iterations:
+  ```bash
+  $ go test -bench=BenchmarkTransition$ -benchtime=5x -benchmem -run=^$
+  ```
+- Run the state transition benchmark with memory statistics:
+  ```bash
+  $  go test -bench=BenchmarkTransitionWithMemStats$ -benchtime=5x -run=^$
+  ```
+- Run with memory growth statistics
+  ```bash
+  $ go test -bench=BenchmarkTransitionMemoryGrowth -benchtime=5x -run=^$
+  ```
+
+### Results
+
+Estimated memory usage per registration:
+
+## Testing
+
+To test the full suite, run the operators through the usual Golang test harness: `go test ./... -v -count 1`. Currently the following unit tests are checked:
+
+### AMF Operator
+1. Registration:
+   - Accept a legitimate registration
+   - Reject a registration with invalid reg-type
+   - Reject a registration with invalid 5G standard
+   - Reject a registration with an empty mobile identity
+   - Reject a registration with an unsupported cypher
+   - Reject an unknown user
+   - Delete a registration and linked resources
+   - Register 2 parallel registrations
+2. Session:
+   - Creating a session for an UE
+   - Accept a legitimate session request
+   - Reject a session with no network config request
+   - Reject a session with no flowspec
+   - Reject a session with invalid NSSAI
+   - Reject a session with no GUTI
+   - Initiating an active->idle state transition: deactive an active session
+   - Reject a deactivation request for an unknown registration
+
+### AUSF Operator
+1. SUPI-SUCI mapping
+   - Initialize a SUCI-to-SUPI table
+   - Accept a valid SUPI request
+   - Reject an invalid SUPI request
+
+### SMF Operator
+1. SessionContext:
+   - Accept a legitimate SessionContext
+   - Create a UPF config for a legitimate SessionContext
+   - Maintain the active session table
+2. Active->idle->active status transition
+   - Idle an active session
+
+### UDM Operator
+1. Config
+   - Handle a valid config request
 
 ## License
 

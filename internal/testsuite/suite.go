@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/l7mp/dcontroller/pkg/auth"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/go-logr/logr"
+	"github.com/l7mp/dcontroller/pkg/auth"
+	"go.uber.org/zap/zapcore"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/hsnlab/dctrl5g/internal/dctrl"
 )
@@ -20,7 +22,21 @@ const (
 	certFile = "apiserver.crt"
 )
 
-func StartOps(ctx context.Context, opSpecs []dctrl.OpSpec, port int, logger logr.Logger) (*dctrl.Dctrl, error) {
+func StartOps(ctx context.Context, opSpecs []dctrl.OpSpec, port, loglevel int) (*dctrl.Dctrl, error) {
+	var logger logr.Logger
+	if loglevel == 0 {
+		// turn off
+		logger = logr.Discard()
+	} else {
+		logger = zap.New(zap.UseFlagOptions(&zap.Options{
+			Development:     true,
+			DestWriter:      GinkgoWriter,
+			StacktraceLevel: zapcore.Level(3),
+			TimeEncoder:     zapcore.RFC3339NanoTimeEncoder,
+			Level:           zapcore.Level(loglevel),
+		}))
+	}
+
 	cert, key, err := auth.GenerateSelfSignedCertWithSANs([]string{"localhost"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate keys: %w", err)

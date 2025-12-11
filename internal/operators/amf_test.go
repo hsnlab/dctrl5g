@@ -36,8 +36,9 @@ var _ = Describe("AMF Operator", func() {
 			{Name: "pcf", File: "pcf.yaml"},
 			{Name: "upf", File: "upf.yaml"},
 			// UDM is manual
-		}, 0, logger)
+		}, 0, loglevel)
 		Expect(err).NotTo(HaveOccurred())
+		logger = d.GetLogger()
 		op = d.GetOperator("amf")
 		Expect(op).NotTo(BeNil())
 		c = d.GetCache().GetClient()

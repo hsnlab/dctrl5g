@@ -137,6 +137,7 @@ func New(opts Options) (*Dctrl, error) {
 }
 
 func (d *Dctrl) GetCache() *cache.ViewCache { return d.sharedCache }
+func (d *Dctrl) GetLogger() logr.Logger     { return d.logger }
 
 func (d *Dctrl) Start(ctx context.Context) error {
 	defer close(d.errorChan)

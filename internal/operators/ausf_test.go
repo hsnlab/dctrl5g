@@ -33,8 +33,9 @@ var _ = Describe("AUSF Operator", func() {
 		ctx, cancel = context.WithCancel(context.Background())
 		d, err := testsuite.StartOps(ctx, []dctrl.OpSpec{
 			{Name: "ausf", File: "ausf.yaml"},
-		}, 0, logger)
+		}, 0, loglevel)
 		Expect(err).NotTo(HaveOccurred())
+		logger = d.GetLogger()
 		op = d.GetOperator("ausf")
 		Expect(op).NotTo(BeNil())
 		var ok bool

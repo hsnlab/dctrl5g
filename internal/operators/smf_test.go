@@ -34,8 +34,9 @@ var _ = Describe("SMF Operator", func() {
 		d, err := testsuite.StartOps(ctx, []dctrl.OpSpec{
 			{Name: "smf", File: "smf.yaml"},
 			{Name: "pcf", File: "pcf.yaml"},
-		}, 0, logger)
+		}, 0, loglevel)
 		Expect(err).NotTo(HaveOccurred())
+		logger = d.GetLogger()
 		op = d.GetOperator("smf")
 		Expect(op).NotTo(BeNil())
 		c = d.GetCache().GetClient()
