@@ -216,7 +216,8 @@ func BenchmarkRegistrationMemoryGrowth(b *testing.B) {
 			currentHeap := memStats.HeapAlloc
 			growth := int64(currentHeap) - int64(baselineHeap)
 			perReg := growth / int64(i+1)
-			b.Logf("After %d regs: heap=%d bytes (%.2f MB), growth=%.2f MB, per-reg=%.2f KB",
+			// Use fmt.Printf to avoid benchmark log truncation.
+			fmt.Printf("After %d regs: heap=%d bytes (%.2f MB), growth=%.2f MB, per-reg=%.2f KB\n",
 				i+1,
 				currentHeap,
 				float64(currentHeap)/(1024*1024),
@@ -530,7 +531,8 @@ func BenchmarkSessionMemoryGrowth(b *testing.B) {
 			currentHeap := memStats.HeapAlloc
 			growth := int64(currentHeap) - int64(baselineHeap)
 			perSession := growth / int64(i+1)
-			b.Logf("After %d sessions: heap=%d bytes (%.2f MB), growth=%.2f MB, per-session=%.2f KB",
+			// Use fmt.Printf to avoid benchmark log truncation.
+			fmt.Printf("After %d sessions: heap=%d bytes (%.2f MB), growth=%.2f MB, per-session=%.2f KB\n",
 				i+1,
 				currentHeap,
 				float64(currentHeap)/(1024*1024),
@@ -969,7 +971,8 @@ func BenchmarkTransitionMemoryGrowth(b *testing.B) {
 			currentHeap := memStats.HeapAlloc
 			growth := int64(currentHeap) - int64(baselineHeap)
 			perTransition := growth / int64(i+1)
-			b.Logf("After %d transitions: heap=%d bytes (%.2f MB), growth=%.2f MB, per-transition=%.2f KB",
+			// Use fmt.Printf to avoid benchmark log truncation.
+			fmt.Printf("After %d transitions: heap=%d bytes (%.2f MB), growth=%.2f MB, per-transition=%.2f KB\n",
 				i+1,
 				currentHeap,
 				float64(currentHeap)/(1024*1024),
