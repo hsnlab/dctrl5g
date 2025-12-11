@@ -1,8 +1,137 @@
 #  Declarative 5G control plane simulator
 
-A simulator for the 5G UE and control plane interactions using the declarative Δ-controller framework.
+The **dctrl5g** project implements a declarative 5G Core Network simulator built on top of the Δ-controller framework, modeling key control plane functions (AMF, SMF, AUSF, UDM and UPF) as Kubernetes-style operators. It enables the simulation of UE registration, authentication, identity resolution, PDU session establishment and idle-active transition through standard Custom Resource workflows and declarative pipelines.
 
-## Getting started
+## Overview
+
+**dctrl5g** provides a simulated 5G Core Network control plane environment built upon the [Δ-controller](https://github.com/l7mp/dcontroller) framework. Unlike traditional imperative simulators, this project models Network Functions as declarative operators that transform state through JSONPath-like pipelines.
+
+The system allows users to act as User Equipment (UE) by interacting with Kubernetes Custom Resources via a standard extension API server. It fully simulates the lifecycle of 5G connectivity, including:
+- **Network Functions:** Simulates interactions between AMF, AUSF, UDM, SMF, PCF, and UPF.
+- **Registration Flow:** Handles SUCI-to-SUPI resolution (privacy), AKA authentication, and GUTI allocation.
+- **Session Management:** Models PDU Session establishment with QoS policy enforcement, IP allocation, and UPF configuration.
+- **State Transitions:** Supports active-to-idle transitions and context releases via declarative state changes.
+
+The logic for most operators (AMF, SMF, AUSF) is defined in high-level YAML pipelines, while the UDM is implemented as a native Go controller to handle complex credential generation (kubeconfigs) and RBAC token issuance.
+
+## Architecture
+
+The below diagram shows the general architecture of **dctrl5g**:
+
+``` mermaid
+graph TD
+    %% Styling
+    classDef user fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef cr fill:#e1f5fe,stroke:#0277bd,stroke-width:2px;
+    classDef logic fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef native fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef framework fill:#eceff1,stroke:#455a64,stroke-width:2px;
+
+    User([User / UE Simulator]):::user
+    
+    subgraph DCTRL_Framework ["Δ-Controller Framework (dctrl)"]
+        style DCTRL_Framework fill:#fafafa,stroke:#999
+        
+        APIServer["API Server (Auth / RBAC)"]:::framework
+        PipelineEngine["YAML Pipeline Engine"]:::framework
+    end
+
+    %% User Interactions
+    User -->|kubectl apply| Registration["Registration (CR)"]:::cr
+    User -->|kubectl apply| Session["Session (CR)"]:::cr
+    User -->|kubectl apply| CtxRel["ContextRelease (CR)"]:::cr
+
+    %% AMF Operator
+    subgraph AMF_Operator ["AMF (Access & Mobility)"]
+        style AMF_Operator fill:#e3f2fd,stroke:#2196f3
+        
+        Registration -->|Watches| AMF_Reg_Pipe{{Pipeline: Register Input}}:::logic
+        AMF_Reg_Pipe -->|Creates/Updates| RegState["RegState (Internal)"]:::cr
+        
+        RegState -.->|Read| AMF_Id_Pipe{{Pipeline: ID Handler}}:::logic
+        RegState -.->|Read| AMF_Config_Pipe{{Pipeline: Config Handler}}:::logic
+        
+        Session -->|Watches| AMF_Sess_Pipe{{Pipeline: Session Input}}:::logic
+        AMF_Sess_Pipe -->|Validates & Creates| SessionContext["SMF:SessionContext (CR)"]:::cr
+        
+        CtxRel -->|Watches| AMF_Rel_Pipe{{Pipeline: Release Input}}:::logic
+        AMF_Rel_Pipe -->|Patches Idle| SessionContext
+    end
+
+    %% AUSF Operator
+    subgraph AUSF_Operator ["AUSF (Authentication)"]
+        style AUSF_Operator fill:#f3e5f5,stroke:#9c27b0
+        
+        AMF_Id_Pipe -->|Creates| MobileIdentity["MobileIdentity (CR)"]:::cr
+        SuciTable[("SUCI-SUPI Table")]:::cr
+        
+        MobileIdentity -->|Watches| AUSF_Pipe{{Pipeline: SUPI Lookup}}:::logic
+        SuciTable -.->|Join| AUSF_Pipe
+        AUSF_Pipe -->|Updates Status| MobileIdentity
+    end
+
+    %% UDM Operator
+    subgraph UDM_Operator ["UDM (Unified Data)"]
+        style UDM_Operator fill:#e8f5e9,stroke:#4caf50
+        
+        AMF_Config_Pipe -->|Creates| UdmConfig["Config (CR)"]:::cr
+        
+        UdmConfig -->|Watches| UDM_Native[("Native Go Controller<br/>(Generates Kubeconfig)")]:::native
+        UDM_Native -->|Updates Status| UdmConfig
+    end
+
+    %% SMF Operator
+    subgraph SMF_Operator ["SMF (Session Management)"]
+        style SMF_Operator fill:#fff3e0,stroke:#ff9800
+        
+        SessionContext -->|Watches| SMF_Pipe{{Pipeline: Context Handler}}:::logic
+        ActiveSess[("ActiveSession Table")]:::cr
+        
+        SMF_Pipe -->|Updates IP/DNS/QoS| SessionContext
+        SMF_Pipe -->|Maintains| ActiveSess
+    end
+
+    %% PCF Operator
+    subgraph PCF_Operator ["PCF (Policy)"]
+        style PCF_Operator fill:#fbe9e7,stroke:#ff5722
+        PolicyTable[("Policy Table")]:::cr
+    end
+
+    %% UPF Operator
+    subgraph UPF_Operator ["UPF (User Plane)"]
+        style UPF_Operator fill:#e0f7fa,stroke:#00bcd4
+        
+        SMF_Pipe -->|Creates| UPFConfig["UPF:Config (CR)"]:::cr
+        UPFConfig -->|Watches| UPF_Pipe{{Pipeline: Active Config}}:::logic
+        UPF_Pipe -->|Maintains| ActiveConf[("ActiveConfig Table")]:::cr
+    end
+
+    %% Cross-Component Relationships
+    MobileIdentity -.->|Status Watch| AMF_Id_Pipe
+    UdmConfig -.->|Status Watch| AMF_Config_Pipe
+    PolicyTable -.->|Join| SMF_Pipe
+    SessionContext -.->|Status Watch| AMF_Sess_Pipe
+    AMF_Sess_Pipe -->|Updates Status| Session
+    AMF_Reg_Pipe -->|Updates Status| Registration
+
+    %% Link Framework
+    Registration -.-> APIServer
+    Session -.-> APIServer
+    UdmConfig -.-> APIServer
+    MobileIdentity -.-> APIServer
+```
+
+The project is built on the Δ-controller framework, shifting the simulator from imperative code to a declarative, data-driven architecture. Instead of managing complex reconciliation loops manually, the system defines state transitions using YAML-based processing pipelines.
+
+**The API Surface (CRDs):** The simulation interface is purely unstructured Kubernetes-style Custom Resources. Users act as User Equipment (UE) by applying `Registration` or `Session` manifests via an extension Kubernetes API server. The API Server handles authentication (JWT) and RBAC, simulating the security boundaries of a real network.
+
+**Operator Pipelines:** Most control plane logic (AMF, AUSF, SMF, and UPF) is defined in declarative YAML pipelines located in `internal/operators/`. These pipelines perform relational-algebra inspired operations (projections, joins, selections) on input streams to produce output state. The only exception is the UDM operator is implemented as a native Go controller (`internal/operators/udm/`). This is required for complex logic that YAML pipelines cannot handle, such as cryptographic key generation and the issuance of signed kubeconfigs for authenticated UEs.
+- **Access & Mobility (AMF)**: The AMF operator acts as the central orchestrator. It validates UE inputs, maintains internal state machines (`RegState`), and coordinates with the AUSF for security and the SMF for connectivity. It simulates the N1 NAS interface.
+- **Identity & Security (AUSF / UDM):** The AUSF resolves SUCI (encrypted IDs) to SUPI (permanent IDs) using a lookup table. The UDM generates the actual subscription information, represented as a scoped Kubernetes `Config` that grants the UE permissions to proceed with session establishment.
+- **Session Management (SMF / PCF):** The **SMF** manages the lifecycle of PDU sessions. It merges user requests with **PCF** policies (QoS rules, bandwidth limits).
+- **User plane (UPF):** The UPF represents the data plane. The SMF projects a finalized configuration (`UPF:Config`) into the UPF namespace, simulating the N4 interface provisioning.
+
+## Getting stated
 
 You will need the `dctl` command line tool to administer kubeconfigs, obtain it from
 [here](https://github.com/l7mp/dcontroller).
@@ -197,7 +326,7 @@ The AUSF control loops are as follows:
    2. Set the label `state:Ready`
    3. Write status back to AUSF:MobileIdentity.
 
-### Getting started
+### Usage
 
 Init the operators using the production mode and assume again username is `user-1`.
 
@@ -525,7 +654,7 @@ The UPF control loops are as follows:
    2. Gather the name, namespace, and traffic spec per each UPF:Config resources into a list.
    4. Write config list into the UPF:ActiveConfigTable resource.
    
-### Getting started
+### Usage
 
 Make sure a registration exists for the current user name and the full user config is loaded as above. We assume again that the username is `user-1`.
 
@@ -674,7 +803,7 @@ The AMF control loops are as follows:
    3. Set `spec.idle` to `true`.
    4. Patch the SMF:SessionContext resource.
 
-### Getting started
+### Usage
 
 Make sure a registration and a session exists for the `user-1` and the full user config is loaded.
 
