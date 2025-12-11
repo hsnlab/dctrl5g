@@ -56,16 +56,18 @@ graph TD
     subgraph AMF_Operator ["AMF (Access & Mobility)"]
         style AMF_Operator fill:#e3f2fd,stroke:#2196f3
 
-        Registration -->|Watches| AMF_Reg_Pipe{{Pipeline: Register Input}}:::logic
+        Registration -->|Watches| AMF_Reg_Pipe{{Pipeline: Register Input/Output}}:::logic
         AMF_Reg_Pipe -->|Creates/Updates| RegState["RegState (Internal)"]:::cr
+        ActiveRegistration[("ActiveRegistration Table")]:::cr
+        AMF_Reg_Pipe -->|Maintains| ActiveRegistration
 
-        RegState -.->|Read| AMF_Id_Pipe{{Pipeline: ID Handler}}:::logic
-        RegState -.->|Read| AMF_Config_Pipe{{Pipeline: Config Handler}}:::logic
+        RegState -.->|Read| AMF_Id_Pipe{{Pipeline: MobileIdentity Req/Handler}}:::logic
+        RegState -.->|Read| AMF_Config_Pipe{{Pipeline: Config Req/Handler}}:::logic
 
-        Session -->|Watches| AMF_Sess_Pipe{{Pipeline: Session Input}}:::logic
+        Session -->|Watches| AMF_Sess_Pipe{{Pipeline: Session Input/Output}}:::logic
         AMF_Sess_Pipe -->|Validates & Creates| SessionContext["SMF:SessionContext (CR)"]:::cr
 
-        CtxRel -->|Watches| AMF_Rel_Pipe{{Pipeline: Release Input}}:::logic
+        CtxRel -->|Watches| AMF_Rel_Pipe{{Pipeline: Release Input/Output}}:::logic
         AMF_Rel_Pipe -->|Patches Idle| SessionContext
     end
 
@@ -95,7 +97,7 @@ graph TD
     subgraph SMF_Operator ["SMF (Session Management)"]
         style SMF_Operator fill:#fff3e0,stroke:#ff9800
 
-        SessionContext -->|Watches| SMF_Pipe{{Pipeline: Context Handler}}:::logic
+        SessionContext -->|Watches| SMF_Pipe{{Pipeline: SessionContext Handler}}:::logic
         ActiveSess[("ActiveSession Table")]:::cr
 
         SMF_Pipe -->|Updates IP/DNS/QoS| SessionContext
@@ -124,30 +126,25 @@ graph TD
     SessionContext -.->|Status Watch| AMF_Sess_Pipe
     AMF_Sess_Pipe -->|Updates Status| Session
     AMF_Reg_Pipe -->|Updates Status| Registration
-
-    %% Link Framework
-    Registration -.-> APIServer
-    Session -.-> APIServer
-    UdmConfig -.-> APIServer
-    MobileIdentity -.-> APIServer
 ```
 
 The project is built on the Δ-controller framework, shifting the simulator from imperative code to a declarative, data-driven architecture. Instead of managing complex reconciliation loops manually, the system defines state transitions using YAML-based processing pipelines.
 
-**The API Surface (CRDs):** The simulation interface is purely unstructured Kubernetes-style Custom Resources. Users act as User Equipment (UE) by applying `Registration` or `Session` manifests via an extension Kubernetes API server. The API Server handles authentication (JWT) and RBAC, simulating the security boundaries of a real network.
+**The API Surface (CRDs):** The simulation interface is purely unstructured Kubernetes-style Custom Resources. Users act as User Equipment (UE) by applying Registration or Session manifests via an extension Kubernetes API server. The API Server handles authentication (JWT) and RBAC, simulating the security boundaries of a real network.
 
-**Operator Pipelines:** Most control plane logic (AMF, AUSF, SMF, and UPF) is defined in declarative YAML pipelines located in `internal/operators/`. These pipelines perform relational-algebra inspired operations (projections, joins, selections) on input streams to produce output state. The only exception is the UDM operator is implemented as a native Go controller (`internal/operators/udm/`). This is required for complex logic that YAML pipelines cannot handle, such as cryptographic key generation and the issuance of signed kubeconfigs for authenticated UEs.
-- **Access & Mobility (AMF)**: The AMF operator acts as the central orchestrator. It validates UE inputs, maintains internal state machines (`RegState`), and coordinates with the AUSF for security and the SMF for connectivity. It simulates the N1 NAS interface.
-- **Identity & Security (AUSF / UDM):** The AUSF resolves SUCI (encrypted IDs) to SUPI (permanent IDs) using a lookup table. The UDM generates the actual subscription information, represented as a scoped Kubernetes `Config` that grants the UE permissions to proceed with session establishment.
+**Operator Pipelines:** Most control plane logic (AMF, AUSF, SMF, and UPF) is defined in declarative YAML pipelines located in `internal/operators/`. These pipelines perform relational-algebra inspired operations (projections, joins, selections) on input streams to produce output state. The only exception is the UDM operator, which is implemented as a native Go controller (`internal/operators/udm/`). This is required for complex logic that YAML pipelines cannot handle, such as cryptographic key generation and the issuance of signed kubeconfigs for authenticated UEs.
+- **Access & Mobility (AMF)**: The AMF operator acts as the central orchestrator. It validates UE inputs, maintains internal state machines (RegState), and coordinates with the AUSF for security and the SMF for connectivity. It simulates the N1 NAS interface.
+- **Identity & Security (AUSF / UDM):** The AUSF resolves SUCI (encrypted IDs) to SUPI (permanent IDs) using a lookup table. The UDM generates the actual subscription information, represented as a scoped Kubernetes Config that grants the UE permissions to proceed with session establishment.
 - **Session Management (SMF / PCF):** The **SMF** manages the lifecycle of PDU sessions. It merges user requests with **PCF** policies (QoS rules, bandwidth limits).
-- **User plane (UPF):** The UPF represents the data plane. The SMF projects a finalized configuration (`UPF:Config`) into the UPF namespace, simulating the N4 interface provisioning.
+- **User plane (UPF):** The UPF represents the data plane. The SMF projects a finalized configuration (UPF:Config) into the UPF namespace, simulating the N4 interface provisioning.
 
 ## Getting stated
 
-You will need the `dctl` command line tool to administer kubeconfigs, obtain it from
-[here](https://github.com/l7mp/dcontroller).
+You will need the `dctl` command line tool to administer kubeconfigs, obtain it from [here](https://github.com/l7mp/dcontroller).
 
 ### Development
+
+For testing, the API server can be launched in insecure pure-HTTP mode.
 
 1. Start the operators using unsafe HTTP mode:
    ```bash
@@ -165,6 +162,8 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
    ```
 
 ### Production
+
+For production, the API server must provide full authentication, authorization and encryption for UE interactions.
 
 1. Generate the TLS certificate:
    ```bash
@@ -195,7 +194,7 @@ You will need the `dctl` command line tool to administer kubeconfigs, obtain it 
 
 ### The Registration resource
 
-The Registration resource is the main driver for creating UE registrations. The UE specifies the registration parameters in the spec of the Registration resource and the AMF will add a status to indicate the registration status plus some useful info. Note that the annotations are optional, but the spec parameters are mandatory (checked and rejected in missing or invalid)
+The Registration resource is the main driver for creating UE registrations. The UE specifies the registration parameters in the spec of the Registration resource and the AMF will add a status to indicate the registration status plus some useful info. Note that the annotations are optional, but the spec parameters are mandatory (checked and rejected if missing or invalid).
 
 The below dump shows a full Registration resource with a valid status set by the AMF:
 
@@ -247,7 +246,7 @@ status:                                    # Set by the AMF
   - sliceDifferentiator: "000001"
     sliceType: eMBB
   conditions:
-  - message: Registration successful       # Indicates overall regitreation success
+  - message: Registration successful       # Indicates overall registration success
     reason: RegistrationSuccessful
     status: "True"
     type: Ready
@@ -292,7 +291,7 @@ sequenceDiagram
 
 The AMF control loops are as follows:
 1. **Control loop** `register-input`. **Purpose:** validate AMF:Registration and write to internal state. **Watches:** AMF:Registration. **Predicates:** `GenerationChanged`. **Writes:** AMF:RegState (internal registration state).
-   1. Create an empty AMF:RegState resource
+   1. Create an empty AMF:RegState resource.
    2. Initialize status fields.
    3. Check registration type. If not `initial`, set `Validated` status to `False` with reason `InvalidType`.
    4. Check 5GC/NR native mode. If not `n1Mode`, set `Validated` status to `False` with reason `StandardNotSupported`.
@@ -300,39 +299,39 @@ The AMF control loops are as follows:
    6. Check UE security capability. If the encryption algorithms list does not contain `5G-EA2` or the integrity algorithms list does not contain `5G-IA2`, set `Validated` status to `False` with reason `EncyptionNotSupported`.
    7. Otherwise set `Validated` status to `True` with reason `Validated`.
    8. Write AMF:RegState.
-2. **Control loop** `register-identity-req`. **Purpose:** generate mobile identity requests for the AUSF. **Watches:** AMF:RegState. **Predicates:** runs only if the `Validated` status is `True`. **Writes:**: AUSF:MobileIdentity.
+2. **Control loop** `register-identity-req`. **Purpose:** generate mobile identity requests for the AUSF. **Watches:** AMF:RegState. **Predicates:** runs only if the `Validated` status is `True`. **Writes**: AUSF:MobileIdentity.
    1. Create an empty AUSF:MobileIdentity resource.
    2. Set the SUCI in the spec.
    3. Send to the AUSF.
-3. **Control loop** `register-identity-handler`. **Purpose:** handle mobile identity responses from the AUSF. **Watches:** AMF:RegState and AUSF:MobileIdentity. **Predicates:** runs only if AMF:RegState `Validated` status is `True` and the MobileIdeintity is labeled `state:Ready`. **Writes:**: AMF:RegState.
+3. **Control loop** `register-identity-handler`. **Purpose:** handle mobile identity responses from the AUSF. **Watches:** AMF:RegState and AUSF:MobileIdentity. **Predicates:** runs only if AMF:RegState `Validated` status is `True` and the MobileIdeintity is labeled `state:Ready`. **Writes**: AMF:RegState.
    1. Join on metadata.
-   2. Check is AUSF:MobileIdentity `Reeady` status is true. If not, set the `Authenticated` status to `False` with reason `SupiNotFound`.
+   2. Check if AUSF:MobileIdentity `Reeady` status is true. If not, set the `Authenticated` status to `False` with reason `SupiNotFound`.
    3. Genetate a GUTI based on the SUPI returned by the AUSF and add to the status.
    4. Set the AMF:RegState `Authenticated` status to `True` with reason `AuthenticationSuccess`.
    5. Write AMF:RegState.
-4. **Control loop** `register-config-req`. **Purpose:** generate a config request to the UDM in order to obtain a secure context for the UE. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes:**: UDM:Config.
+4. **Control loop** `register-config-req`. **Purpose:** generate a config request to the UDM in order to obtain a secure context for the UE. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes**: UDM:Config.
    1. Create an empty UDM:Config resource
    2. Set metadata.
    3. Send to the UDM.
-5. **Control loop** `register-config-handler`. **Purpose:** handle configs from the UDM. **Watches:** AMF:RegState and UDM:Config. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes:**: AMF:RegState.
+5. **Control loop** `register-config-handler`. **Purpose:** handle configs from the UDM. **Watches:** AMF:RegState and UDM:Config. **Predicates:** runs only if AMF:RegState `Authenticated` status is `True`. **Writes**: AMF:RegState.
    1. Join on metadata.
-   2. Check is UDM:Config `Reeady` status is true. If not, set the `SubscriptionInfoFound` status to `False` with reason `ConfigNotFound`.
+   2. Check if UDM:Config `Ready` status is true. If not, set the `SubscriptionInfoFound` status to `False` with reason `ConfigNotFound`.
    3. Otherwise add the config returned by the UDM to the status and the `SubscriptionInfoFound` status to `True` with reason `ConfigReady`.
    4. Write to AMF:RegState.
-6. **Control loop** `register-output`. **Purpose:** write state maintained in the internal AMF:RegState back into the user-visible AMF:Registration resources. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `SubscriptionInfoFound` status is `True`. **Writes:**: AMF:Registration.
+6. **Control loop** `register-output`. **Purpose:** write state maintained in the internal AMF:RegState back into the user-visible AMF:Registration resources. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `SubscriptionInfoFound` status is `True`. **Writes**: AMF:Registration.
    1. If each of the `Validated`, `Authenticated`, and `SubscriptionInfoFound` status is `True`, set the `Ready` status to `True` with reason `RegistrationSuccessful`. Otherwise set the `Ready` status to `False` with reason `RegistrationFailed`.
    2. Copy the `Validated` status from the internal state to the AMF:Registration resource status conditions.
    3. Copy the `Authenticated` status from the internal state to the AMF:Registration resource status conditions.
    4. Copy the `SubscriptionInfoFound` status from the internal state to the AMF:Registration resource status conditions.
    5. Copy the rest of the status fields from the AMF:RegState into the AMF:Registration status.
    6. Write to AMF:Registration.
-7. **Control loop** `active-registration`. **Purpose:** maintain the `active-registration` table at the AMF. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Ready` status is `True`. **Writes:**: AMF:ActiveRegistrationTable.
+7. **Control loop** `active-registration`. **Purpose:** maintain the `active-registration` table at the AMF. **Watches:** AMF:RegState. **Predicates:** runs only if AMF:RegState `Ready` status is `True`. **Writes**: AMF:ActiveRegistrationTable.
    1. Create an empty AMF:ActiveRegistrationTable resource.
    2. Gather the name, namespace, GUTI and SUCI from all AMF:RegState resources into a list.
    3. Write registration list into the AMF:ActiveRegistrationTable.
 
 The AUSF control loops are as follows:
-1. **Control loop** `supi-req-handler`. **Purpose:** look up the SUPI based on the SUCI. **Watches:** AUSF:MobileIdentity. **Predicates:** `GenerationChanged`. **Writes:**: AUSF:MobileIdentity.
+1. **Control loop** `supi-req-handler`. **Purpose:** look up the SUPI based on the SUCI. **Watches:** AUSF:MobileIdentity. **Predicates:** `GenerationChanged`. **Writes**: AUSF:MobileIdentity.
    1. Look up the SUPI based on the SUCI in the request. If successful, set the `Ready` status to `True` with reason `Ready`, otherwise set `Ready` to `False` with reason `MobileIdentityNotFound`.
    2. Set the label `state:Ready`
    3. Write status back to AUSF:MobileIdentity.
@@ -347,7 +346,7 @@ Init the operators using the production mode and assume again username is `user-
    $ export KUBECONFIG=./user-1-initial.config
    ```
 
-2. Optionally query the initial config. Observe only basic access rights are enabled for the UE, and only to the `registration` resource, only in their own namespace (`user-1`). This effectively isolates UEs from each other, preventing malicious UEs from modifying the registration state of other UEs.
+2. Optionally query the initial config. Observe only basic access rights are enabled for the UE, and only to the `registration` resource in the user's own namespace (`user-1`). This effectively isolates UEs from each other, preventing malicious UEs from modifying the registration state of other UEs.
 
    ```bash
    $ dctl get-config
@@ -403,7 +402,7 @@ Init the operators using the production mode and assume again username is `user-
    ]
    ```
 
-4. Load the config returned by the AMF. This should now allow fine-grained access policies beyond the basic registration workflow. In particular, the UE from now can create, watch, get and list Registration, Session and ContextRelease resources in their own namespace (`user-1`).
+4. Load the config returned by the AMF. The new sets up fine-grained access policies beyond the basic registration workflow. In particular, the UE from now can create, watch, get and list Registration, Session and ContextRelease resources in their own namespace (`user-1`).
 
    ```bash
    $ kubectl -n user-1 get registration user-1 -o jsonpath='{.status.config}' > ./user-1-full.config
@@ -414,7 +413,18 @@ Init the operators using the production mode and assume again username is `user-
 
    ```bash
    $ dctl get-config
-   ...
+   👤 User Information:
+      Username:   user-1
+      Namespaces: [user-1]
+      Rules: 1 RBAC policy rules
+        [1] verbs=[create get list watch delete] apiGroups=[amf.view.dcontroller.io] resources=[registration session contextrelease]
+   
+   ⏱️  Token Metadata:
+      Issuer:     dcontroller
+      Issued At:  ...
+      Expires At: ...
+      Not Before: ...
+   ✅ Token is VALID
    ```
 
 5. In another terminal load the admin config and check the table maintaining the active registrations. Observe that the registration for `user-1` is added to the list
@@ -631,7 +641,7 @@ The AMF control loops are as follows:
    8. Otherwise set the `Validated` status to `True` with reason `Validated`.
    9. Set the GUTI, SUPI and SUCI in the status
    10. Write to the SMF:SessionContext resource
-2. **Control loop** `session-output`. **Purpose:** write state maintained in the internal SMF:SessionContext back into the user-visible AMF:Session resource. **Watches:** AMF:SessionContext. **Predicates:** none. **Writes:**: AMF:Session.
+2. **Control loop** `session-output`. **Purpose:** write state maintained in the internal SMF:SessionContext back into the user-visible AMF:Session resource. **Watches:** AMF:SessionContext. **Predicates:** none. **Writes**: AMF:Session.
    1. If each of the `Validated`, `PolicyApplied`, and `UPFConfigured` status is `True`, set the `Ready` status to `True` with reason `SessionSuccessful`. Otherwise set the `Ready` status to `False` with reason `SessionFailed`.
    2. Copy the `Validated` status from the internal state to the AMF:Session resource status conditions.
    3. Copy the `PolicyApplied` status from the internal state to the AMF:Session resource status conditions.
@@ -653,14 +663,14 @@ The SMF control loops are as follows:
    1. Create an empty UPF:Config resource
    2. Copy traffic spec from the SMF:SessionContext to the UPF:Concig
    3. Send UPF:Concig
-3. **Control loop** `active-session`. **Purpose:** maintain the `active-session` table at the SMF. **Watches:** SMF:SessionContext. **Predicates:** runs only if SMF:SessionContext `Validated` and `PolicyApplied` status is `True`. **Writes:**: SMF:ActiveSessionTable.
+3. **Control loop** `active-session`. **Purpose:** maintain the `active-session` table at the SMF. **Watches:** SMF:SessionContext. **Predicates:** runs only if SMF:SessionContext `Validated` and `PolicyApplied` status is `True`. **Writes**: SMF:ActiveSessionTable.
    1. Create an empty SMF:ActiveSessionTable resource.
    2. Gather the name, namespace, GUTI and session id from all SMF:SessionContext resources into a list.
    3. Add the idle status in each list member
    4. Write session list into the SMF:ActiveSessionTable.
 
 The UPF control loops are as follows:
-1. **Control loop** `active-config`. **Purpose:** maintain the `active-config` table at the UPF. **Watches:** UPF:Config. **Predicates:** none. **Writes:**: UPF:ActiveConfigTable.
+1. **Control loop** `active-config`. **Purpose:** maintain the `active-config` table at the UPF. **Watches:** UPF:Config. **Predicates:** none. **Writes**: UPF:ActiveConfigTable.
    1. Create an empty UPF:ActiveConfigTable resource.
    2. Gather the name, namespace, and traffic spec per each UPF:Config resources into a list.
    4. Write config list into the UPF:ActiveConfigTable resource.
@@ -754,7 +764,7 @@ Make sure a registration exists for the current user name and the full user conf
 
 ### The ContextRelease resource
 
-The ContextRelease resource is the main driver for managing active-idle transitions for UE sessions. The gNode-B (on behalf of the UE) requests an idle transition by specifying the GUTI and the session id in ContextRelease resource sent to the AMF. The AMF returns the results in the status conditions and notifies the SMF by patching the SessionContext resource with `spec.idle: true`. This causes the SMF to fail the `UPFConfigured` status, which in turn revokes the UPC configuration. Note that the full session state is still maintained in the SessionContext. An idle-active transition can be requested by deleting the ContextRelease resource, which will restore the original traffic spec in the UPF.
+The ContextRelease resource is the main driver for managing active-idle transitions for UE sessions. The gNode-B (on behalf of the UE) requests an idle transition by specifying the GUTI and the session-id in a ContextRelease resource sent to the AMF. The AMF returns the results in the status conditions and notifies the SMF by patching the SessionContext resource with `spec.idle: true`. This causes the SMF to fail the `UPFConfigured` status, which in turn revokes the UPC configuration. Note that the full session state is still maintained in the SessionContext. An idle-active transition can be requested by deleting the ContextRelease resource, which will restore the original traffic spec in the UPF.
 
 The below dump shows a full ContextRelease resource with a valid status:
 
@@ -775,9 +785,9 @@ status:
     type: Ready
 ```
 
-### **Control loop**s
+### Control loops
 
-ContextRelease resources are first processed by the AMF (Access and Mobility Management Function). Later steps involve the SMF (Session Management Function)and the UPF (User Plane Function) function.
+ContextRelease resources are first processed by the AMF (Access and Mobility Management Function). Later steps involve the SMF (Session Management Function) and the UPF (User Plane Function) function.
 
 Consider the below sequence diagram:
 
@@ -802,7 +812,7 @@ sequenceDiagram
 ```
 
 The AMF control loops are as follows:
-1. **Control loop** `session-context-release-input`. **Purpose:** validate AMF:ContextRelease resource. **Watches:** AMF:ContextRelease. **Predicates:** `GenerationChanged`. Writes status to AMF:ContextRelease.
+1. **Control loop** `session-context-release-input`. **Purpose:** validate AMF:ContextRelease resource. **Watches:** AMF:ContextRelease. **Predicates:** `GenerationChanged`. **Writes:** AMF:ContextRelease.
    1. Check if GUTI is present in the spec. If not, set `Ready` status to `False` with reason `GutiNotSpecified`
    2. Check if the active-registration table contains the GUTI. If not, set `Ready` status to `False` with reason `GutiNotFound`.
    3. Check if the active-session table contains the session id and the GUTI. If not, set `Ready` status to `False` with reason `SessionNotFound`.
@@ -853,7 +863,7 @@ Make sure a registration and a session exists for the `user-1` and the full user
    $ kubectl delete -f workflows/session/contextrelease-1-1.yaml
    ```
 
-   Again, the watch should dump a new line. Checking again the UPF configs (with admin access) will show the config for the session to re-appear, with exactly the same settings as before:
+   Again, the watch should dump a new line. Checking the UPF configs (with admin access) will show the config for the session to re-appear, with exactly the same settings as before:
 
    ```bash
    kubectl get config.upf -n user-1 user-1-1 -o yaml
@@ -882,10 +892,10 @@ Make sure a registration and a session exists for the `user-1` and the full user
 The project contains a comprehensive operator benchmark suite in `internal/operators` for testing the performance and resource use of the 5G operators.
 
 For all benchmarked worflows there are multiple tests:
-- **Sequential benchmarks** perform the workflow sequentially and measures the time and memory allocations per iteration, and the CPU usage.
-- **Sequential benchmarks with memory statistics** also measure the detailed memory statistics including the total memory allocated, memory used per registration, heap allocation and GC statistics, an object allocation/deallocation counts. Note that memory profiling comes with nonzero overhead.
-- **Sequential benchmarks with memory growth statistics** also track memory growth over multiple iterations and detects memory leaks. Meanwhile it measures baseline heap memory, memory growth per registration, and memory after cleanup (leak detection). Note that memory profiling comes with nonzero overhead.
-- **Parallel benchmarks** for the registration and the session establishment workflow run the tested workflows in parallel measure the time and memory allocations per iteration, and the CPU usage.
+- **Sequential benchmarks** perform the tested workflow sequentially and measure the time and memory allocations per iteration and CPU usage.
+- **Sequential benchmarks with memory statistics** provide detailed memory statistics including the total memory allocated, memory used per registration, heap allocation and GC statistics, an object allocation/deallocation counts. Note that memory profiling comes with nonzero overhead.
+- **Sequential benchmarks with memory growth statistics** track memory growth over multiple iterations to detect memory leaks. Meanwhile the tests measure baseline heap memory, memory growth per registration, and memory after cleanup (leak detection). Note that memory profiling comes with nonzero overhead.
+- **Parallel benchmarks** for the registration and the session establishment workflow run the tested workflows in parallel and measure the time and the number of memory allocations per iteration, and the CPU usage.
 
 To run all benchmarks:
 
@@ -948,15 +958,35 @@ Tests the registration process by creating multiple UE registrations and waiting
 
 ### Results
 
-Estimated memory usage per registration:
+The following benchmarks were run on an AMD EPYC 7502P 32-Core (64 cores with hyper-threading
+enabled) CPU.
+
+#### Parallel (BenchmarkRegistrationParallel)
+
+It takes about 50-100 ms to set up a registration. At about 200 registration an internal queue fills up and the system starts to drop registrations. Meanwhile, CPU load is minimal. Pausing the load generator for a short time to let the queues drain and restoring it after the system becomes responsive again. This sets a firm upper bound on the number of parallel registration operations at 100-200.
+
+| **#Sessions** | **Running time** (ms/op) | **Memory load** (MB/op) | **Allocations** (k-allocs/op) |
+|---------------|--------------------------|-------------------------|-------------------------------|
+| 1             | 51                       | 29                      | 290                           |
+| 2             | 26                       | 19                      | 206                           |
+| 5             | 30                       | 25                      | 286                           |
+| 10            | 35                       | 27                      | 314                           |
+| 20            | 52                       | 40                      | 465                           |
+| 50            | 84                       | 55                      | 686                           |
+| 100           | 94                       | 58                      | 761                           |
+| 200           | 192                      | 113                     | 1568                          |
+
+### Memory profiling (BenchmarkRegistrationMemoryGrowth)
+
+After extensive memory profiling, the below table summarizes the estimated memory usage per
+registration.
 
 | Metric                            | Value      | Notes                          |
 |-----------------------------------|------------|--------------------------------|
-| **Per-operation allocation**      | ~14-20 MB  | From `-benchmem` flag          |
+| **Per-operation allocation**      | ~20-35 MB  | From `-benchmem` flag          |
 | **Heap growth per registration**  | ~1.3 MB    | From runtime.MemStats tracking |
-| **Allocations per operation**     | ~170k-200k | Number of malloc calls         |
-| **Live objects per registration** | ~6.5k      | Objects not yet freed          |
-
+| **Allocations per operation**     | ~150k-400k | Number of malloc calls         |
+| **Live objects per registration** | ~6.5k      | Objects not yet freed (leak)   |
 
 For production deployment planning:
 
@@ -1001,7 +1031,34 @@ Another set of benchmarks test the session establishment. Note that for all sess
 
 ### Results
 
-Estimated memory usage per registration:
+The following benchmarks were run on an AMD EPYC 7502P 32-Core (64 cores with hyper-threading enabled) CPU.
+
+#### Parallel (BenchmarkSessionParallel)
+
+It takes about 100-300 ms to set up a session. Due to that each iteration involves a registration + session establishment step, the system fills up faster. The test did not even run for 200 sessions.
+
+| **#Sessions** | **Running time** (ms/op) | **Memory load** (MB/op) | **Allocations** (k-allocs/op) |
+|---------------|--------------------------|-------------------------|-------------------------------|
+| 1             | 103                      | 40                      | 422                           |
+| 2             | 102                      | 31                      | 344                           |
+| 5             | 103                      | 30                      | 333                           |
+| 10            | 113                      | 34                      | 381                           |
+| 20            | 148                      | 49                      | 521                           |
+| 50            | 332                      | 13                      | 1118                          |
+| 100           | 810                      | 49                      | 2819                          |
+
+### Memory profiling (BenchmarkSessionMemoryGrowth)
+
+After extensive memory profiling, the below table summarizes the estimated memory usage per session.
+
+| Metric                        | Value     | Notes                                   |
+|-------------------------------|-----------|-----------------------------------------|
+| **Per-operation allocation**  | ~30-40 MB | From `-benchmem` flag                   |
+| **Heap growth per session**   | ~1-1.5 MB | From runtime.MemStats tracking          |
+| **Allocations per operation** | ~400k-1M  | Number of malloc calls                  |
+| **Live objects per session**  | ~174k     | Objects not yet freed per session(leak) |
+
+Most memory allocations are transient (usually caches and internal queues), and eventually sessions cost about 1-2 MB of memory to persist in storage. It seems that it is the number of parallel registration/session operations that is the most constraining factor.
 
 ### Active-idle-active transition
 
@@ -1024,7 +1081,36 @@ The benchmarks test the time and memory needed for active-idle transition. Note 
 
 ### Results
 
-Estimated memory usage per registration:
+The following benchmarks were run on an AMD EPYC 7502P 32-Core (64 cores with hyper-threading enabled) CPU.
+
+#### Sequential (BenchmarkTransition)
+
+It takes about 100 ms to perform an active-idle-active transition.
+
+| **#Iterations** | **Running time** (ms/op) | **Memory load** (MB/op) | **Allocations** (k-allocs/op) |
+|-----------------|--------------------------|-------------------------|-------------------------------|
+| 1               | 101                      | 31                      | 366                           |
+| 2               | 102                      | 32                      | 369                           |
+| 5               | 102                      | 32                      | 372                           |
+| 10              | 102                      | 32                      | 370                           |
+| 20              | 102                      | 32                      | 370                           |
+| 50              | 101                      | 32                      | 372                           |
+| 100             | 101                      | 32                      | 370                           |
+| 200             | 102                      | 32                      | 370                           |
+
+### Memory profiling (BenchmarkSessionMemoryGrowth)
+
+After extensive memory profiling, the below table summarizes the estimated memory usage per
+session.
+
+| Metric                        | Value     | Notes                          |
+|-------------------------------|-----------|--------------------------------|
+| **Per-operation allocation**  | ~30 MB    | From `-benchmem` flag          |
+| **Heap growth per session**   | ~5k       | From runtime.MemStats tracking |
+| **Allocations per operation** | ~360-370k | Number of malloc calls         |
+| **Live objects per session**  | ~6.5k     | Objects not yet freed (leak)   |
+
+Since we are performing the transition over and over again on top of the same registration and session, we do not see major memory scalability issues. We are still leaking memory though.
 
 ## Testing
 
@@ -1083,6 +1169,7 @@ The purpose if this project is as a Proof of Concept for demonstrating a viabili
 - Security Model Mapping: 5G Security is functionally mapped to Kubernetes primitives. Instead of deriving a key and establishing a NAS security context, the UDM generates a Kubernetes ServiceAccount Token (JWT) embedded into a full Kubernetes client config. Possessing this token via the generated kubeconfig represents "being authenticated," allowing the UE to proceed to Session Establishment.
 - Subscriber Database: Subscriber data (SUPI-to-GUTI mappings, valid SUCIs) is currently defined in static tables within the operator YAMLs (`amf.yaml`, `ausf.yaml`). The system does not currently interface with an external UDR (Unified Data Repository) or HSS.
 - Real-time Constraints: As the logic relies on the Kubernetes API Server's consistency model and the Δ-controller polling/watch mechanism, signaling latency is determined by the API Server's performance and etcd consistency. It does not guarantee the microsecond-level determinism required for real-world radio signaling.
+- Partial implementation: The operators deliberately ignore some functions for simplicity, like TAI and location management, EPC/LTE interworking capability.
 
 As usual, use this software at your own risk.
 
