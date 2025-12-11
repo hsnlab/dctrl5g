@@ -2,6 +2,17 @@
 
 The **dctrl5g** project implements a declarative 5G Core Network simulator built on top of the Δ-controller framework, modeling key control plane functions (AMF, SMF, AUSF, UDM and UPF) as Kubernetes-style operators. It enables the simulation of UE registration, authentication, identity resolution, PDU session establishment and idle-active transition through standard Custom Resource workflows and declarative pipelines.
 
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Getting stated](#getting-stated)
+4. [Registration](#registration)
+5. [Session establishment](#session-establishment)
+6. [Session idle transition](#session-idle-transition)
+7. [Benchmarking](#benchmarking)
+8. [Testing](#testing)
+9. [Caveats](#caveats)
+10. [License](#license)
+
 ## Overview
 
 **dctrl5g** provides a simulated 5G Core Network control plane environment built upon the [Δ-controller](https://github.com/l7mp/dcontroller) framework. Unlike traditional imperative simulators, this project models Network Functions as declarative operators that transform state through JSONPath-like pipelines.
@@ -28,10 +39,10 @@ graph TD
     classDef framework fill:#eceff1,stroke:#455a64,stroke-width:2px;
 
     User([User / UE Simulator]):::user
-    
+
     subgraph DCTRL_Framework ["Δ-Controller Framework (dctrl)"]
         style DCTRL_Framework fill:#fafafa,stroke:#999
-        
+
         APIServer["API Server (Auth / RBAC)"]:::framework
         PipelineEngine["YAML Pipeline Engine"]:::framework
     end
@@ -44,16 +55,16 @@ graph TD
     %% AMF Operator
     subgraph AMF_Operator ["AMF (Access & Mobility)"]
         style AMF_Operator fill:#e3f2fd,stroke:#2196f3
-        
+
         Registration -->|Watches| AMF_Reg_Pipe{{Pipeline: Register Input}}:::logic
         AMF_Reg_Pipe -->|Creates/Updates| RegState["RegState (Internal)"]:::cr
-        
+
         RegState -.->|Read| AMF_Id_Pipe{{Pipeline: ID Handler}}:::logic
         RegState -.->|Read| AMF_Config_Pipe{{Pipeline: Config Handler}}:::logic
-        
+
         Session -->|Watches| AMF_Sess_Pipe{{Pipeline: Session Input}}:::logic
         AMF_Sess_Pipe -->|Validates & Creates| SessionContext["SMF:SessionContext (CR)"]:::cr
-        
+
         CtxRel -->|Watches| AMF_Rel_Pipe{{Pipeline: Release Input}}:::logic
         AMF_Rel_Pipe -->|Patches Idle| SessionContext
     end
@@ -61,10 +72,10 @@ graph TD
     %% AUSF Operator
     subgraph AUSF_Operator ["AUSF (Authentication)"]
         style AUSF_Operator fill:#f3e5f5,stroke:#9c27b0
-        
+
         AMF_Id_Pipe -->|Creates| MobileIdentity["MobileIdentity (CR)"]:::cr
         SuciTable[("SUCI-SUPI Table")]:::cr
-        
+
         MobileIdentity -->|Watches| AUSF_Pipe{{Pipeline: SUPI Lookup}}:::logic
         SuciTable -.->|Join| AUSF_Pipe
         AUSF_Pipe -->|Updates Status| MobileIdentity
@@ -73,9 +84,9 @@ graph TD
     %% UDM Operator
     subgraph UDM_Operator ["UDM (Unified Data)"]
         style UDM_Operator fill:#e8f5e9,stroke:#4caf50
-        
+
         AMF_Config_Pipe -->|Creates| UdmConfig["Config (CR)"]:::cr
-        
+
         UdmConfig -->|Watches| UDM_Native[("Native Go Controller<br/>(Generates Kubeconfig)")]:::native
         UDM_Native -->|Updates Status| UdmConfig
     end
@@ -83,10 +94,10 @@ graph TD
     %% SMF Operator
     subgraph SMF_Operator ["SMF (Session Management)"]
         style SMF_Operator fill:#fff3e0,stroke:#ff9800
-        
+
         SessionContext -->|Watches| SMF_Pipe{{Pipeline: Context Handler}}:::logic
         ActiveSess[("ActiveSession Table")]:::cr
-        
+
         SMF_Pipe -->|Updates IP/DNS/QoS| SessionContext
         SMF_Pipe -->|Maintains| ActiveSess
     end
@@ -100,7 +111,7 @@ graph TD
     %% UPF Operator
     subgraph UPF_Operator ["UPF (User Plane)"]
         style UPF_Operator fill:#e0f7fa,stroke:#00bcd4
-        
+
         SMF_Pipe -->|Creates| UPFConfig["UPF:Config (CR)"]:::cr
         UPFConfig -->|Watches| UPF_Pipe{{Pipeline: Active Config}}:::logic
         UPF_Pipe -->|Maintains| ActiveConf[("ActiveConfig Table")]:::cr
@@ -392,7 +403,7 @@ Init the operators using the production mode and assume again username is `user-
    ]
    ```
 
-4. Load the config returned by the AMF. This should now allow fine-grained access policies beyond the basic registration workflow. In particular, the UE from now can create, watch, get and list Registration, Session and ContextRelease resources in their own namespace (`user-1`). 
+4. Load the config returned by the AMF. This should now allow fine-grained access policies beyond the basic registration workflow. In particular, the UE from now can create, watch, get and list Registration, Session and ContextRelease resources in their own namespace (`user-1`).
 
    ```bash
    $ kubectl -n user-1 get registration user-1 -o jsonpath='{.status.config}' > ./user-1-full.config
@@ -479,7 +490,7 @@ spec:
       # - IMSSignaling (5QI=5): SIP signaling, 100ms PDB
       # - Video (5QI=6,7,8,9): Various video streaming
       # - BestEffort (5QI=9): Default, no guarantees
-      fiveQI: ConversationalVoice 
+      fiveQI: ConversationalVoice
       bitRates:                         # bitrates, subjected to PCF policies
         downlinkBwKbps: 128
         uplinkBwKbps: 128
@@ -536,7 +547,7 @@ status:
     type: UPFConfigured
   guti: guti-310-170-3F-152-2A-B7C8D9E0
   suci: suci-0-999-01-02-4f2a7b9c8d13e7a5c0
-  networkConfiguration:                       # Generated network conciguration 
+  networkConfiguration:                       # Generated network conciguration
     dnsConfiguration:
       primaryDNS: 8.8.8.8
       secondaryDNS: 8.8.4.4
@@ -647,13 +658,13 @@ The SMF control loops are as follows:
    2. Gather the name, namespace, GUTI and session id from all SMF:SessionContext resources into a list.
    3. Add the idle status in each list member
    4. Write session list into the SMF:ActiveSessionTable.
-   
+
 The UPF control loops are as follows:
 1. **Control loop** `active-config`. **Purpose:** maintain the `active-config` table at the UPF. **Watches:** UPF:Config. **Predicates:** none. **Writes:**: UPF:ActiveConfigTable.
    1. Create an empty UPF:ActiveConfigTable resource.
    2. Gather the name, namespace, and traffic spec per each UPF:Config resources into a list.
    4. Write config list into the UPF:ActiveConfigTable resource.
-   
+
 ### Usage
 
 Make sure a registration exists for the current user name and the full user config is loaded as above. We assume again that the username is `user-1`.
@@ -777,7 +788,7 @@ sequenceDiagram
     gNode-B->>+AMF: Create ContextRelease
     Note right of AMF: Validate ContextRelease
     AMF->>+SMF: Patch SessionContext with spec.idle:true
-    SMF->>UPF: Remove traffic spec from UPF 
+    SMF->>UPF: Remove traffic spec from UPF
     SMF->>-AMF: Return SessionContext status
     Note right of AMF: Set ContextRelease Ready status
     AMF->>UE: Update Session status
@@ -785,7 +796,7 @@ sequenceDiagram
     UE-->gNode-B: UE session active
     gNode-B->>+AMF: Delete ContextRelease
     AMF->>+SMF: Patch SessionContext with spec.idle:false
-    SMF->>UPF: Restore traffic spec at UPF 
+    SMF->>UPF: Restore traffic spec at UPF
     SMF->>-AMF: Return SessionContext status
     AMF->>UE: Update Session status
 ```
@@ -868,7 +879,7 @@ Make sure a registration and a session exists for the `user-1` and the full user
 
 ## Benchmarking
 
-The project contains a comprehensive operator benchmark suite in `internal/operators` for testing the performance and resource use of the 5G operators. 
+The project contains a comprehensive operator benchmark suite in `internal/operators` for testing the performance and resource use of the 5G operators.
 
 For all benchmarked worflows there are multiple tests:
 - **Sequential benchmarks** perform the workflow sequentially and measures the time and memory allocations per iteration, and the CPU usage.
@@ -1056,6 +1067,24 @@ To test the full suite, run the operators through the usual Golang test harness:
 ### UDM Operator
 1. Config
    - Handle a valid config request
+
+Based on the analysis of the codebase, particularly the operator implementations in `internal/operators/` and the testing suite, here is a **CAVEATS** section suitable for the README.
+
+This section highlights the distinction between this *declarative simulator* and a *production 3GPP core*.
+
+***
+
+## CAVEATS
+
+The purpose if this project is as a Proof of Concept for demonstrating a viability of the declarative control model on a real control plane. While **dctrl5g** accurately models the functional state transitions of a 5G Core Network, users should be aware of the following architectural abstractions and simplifications.
+
+- Control Plane Only (No Data Plane): The UPF (User Plane Function) operator simulates the N4 signaling interface (session configuration, QoS rule installation) but does not perform actual packet forwarding, GTP-U tunneling, or kernel-level routing. No actual user traffic flows through the system.
+- Protocol Abstraction (JSON vs. Binary): This project simulates 3GPP signaling logic but replaces the underlying transport protocols. In particular, on the N1/N2 Interfaces the simulator uses Kubernetes API calls with JSON payloads instead of binary NAS (Non-Access Stratum) over SCTP/NGAP (in fact, the NAS protocol is entirely replaced by HTTPS). For the N11/Nsmf interface, service-based interfaces are modeled as CRD watches rather than HTTP/2 REST calls.
+- Security Model Mapping: 5G Security is functionally mapped to Kubernetes primitives. Instead of deriving a key and establishing a NAS security context, the UDM generates a Kubernetes ServiceAccount Token (JWT) embedded into a full Kubernetes client config. Possessing this token via the generated kubeconfig represents "being authenticated," allowing the UE to proceed to Session Establishment.
+- Subscriber Database: Subscriber data (SUPI-to-GUTI mappings, valid SUCIs) is currently defined in static tables within the operator YAMLs (`amf.yaml`, `ausf.yaml`). The system does not currently interface with an external UDR (Unified Data Repository) or HSS.
+- Real-time Constraints: As the logic relies on the Kubernetes API Server's consistency model and the Δ-controller polling/watch mechanism, signaling latency is determined by the API Server's performance and etcd consistency. It does not guarantee the microsecond-level determinism required for real-world radio signaling.
+
+As usual, use this software at your own risk.
 
 ## License
 
